@@ -4,7 +4,9 @@
 
 Every project that installs `NkChinh.DI.Generator` and declares at least one service gets:
 
-1. A public extension method registering **only that project's own services**:
+1. **`Collect{Assembly}Services`**, always emitted regardless of whether the project references
+   Microsoft.Extensions.DependencyInjection (MEDI) — registers **only that project's own services**,
+   as plain data:
 
    ```csharp
    // AssemblyName = MyCompany.Infrastructure
@@ -12,41 +14,54 @@ Every project that installs `NkChinh.DI.Generator` and declares at least one ser
    {
        public static class MyCompanyInfrastructureServiceCollectionExtensions
        {
-           public static IServiceCollection AddMyCompanyInfrastructureServices(
-               this IServiceCollection services) { /* ... */ }
+           public static void CollectMyCompanyInfrastructureServices(
+               ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)
+           { /* ... */ }
        }
    }
    ```
 
-2. An assembly-level **module marker** (internal infrastructure attribute):
+   The tuple uses only framework types (`System.Type`, `int`, `string`, `bool`) — never a
+   project-embedded class or enum — specifically so it's safe to pass across project references:
+   a type embedded independently per project (like every other DIGen attribute) would be a
+   *different* type in each assembly and wouldn't compile as a shared method parameter.
+
+2. An assembly-level **module marker** (internal infrastructure attribute), naming the `Collect`
+   method — so the marker itself needs no MEDI reference either:
 
    ```csharp
    [assembly: DIGen.Generated.ServiceRegistrationModuleAttribute(
-       "AddMyCompanyInfrastructureServices",
+       "CollectMyCompanyInfrastructureServices",
        "Microsoft.Extensions.DependencyInjection.MyCompanyInfrastructureServiceCollectionExtensions")]
    ```
 
-Any project whose compilation references assemblies carrying module markers (directly or
-transitively — reference closure is flattened) additionally gets an **aggregator**:
+3. **Only if the project resolves MEDI**, two more members: `Add{Assembly}Services(this IServiceCollection)`
+   (builds a list, calls `Collect`, materializes) and, if it also has referenced modules, the
+   **aggregator** `Add{Assembly}AllServices`:
 
-```csharp
-public static IServiceCollection AddMyCompanyApiAllServices(this IServiceCollection services)
-{
-    // every referenced module, exactly once, deterministic order
-    MyCompanyDomainServiceCollectionExtensions.AddMyCompanyDomainServices(services);
-    MyCompanyInfrastructureServiceCollectionExtensions.AddMyCompanyInfrastructureServices(services);
-    // then the host's own services (if any)
-    services.AddMyCompanyApiServices();
-    return services;
-}
-```
+   ```csharp
+   public static IServiceCollection AddMyCompanyApiAllServices(this IServiceCollection services)
+   {
+       var registrations = new List<(Type, Type, int, string?, bool)>();
+       // every referenced module's Collect method, exactly once, deterministic order —
+       // regardless of whether that module itself has a MEDI reference
+       MyCompanyDomainServiceCollectionExtensions.CollectMyCompanyDomainServices(registrations);
+       MyCompanyInfrastructureServiceCollectionExtensions.CollectMyCompanyInfrastructureServices(registrations);
+       // then the host's own services (if any)
+       CollectMyCompanyApiServices(registrations);
+       // materialized exactly once, at the very end
+       return services.MaterializeServices(registrations);
+   }
+   ```
 
 ## Why per-project methods register only their own services
 
 If every project chained its children, diamond dependency graphs
 (`Host → A → Shared`, `Host → B → Shared`) would register `Shared` twice.
-Because each generated method registers only its own assembly and the aggregator invokes each
-module **once** from the flattened reference closure, duplicate registration cannot happen.
+Because each generated `Collect` method registers only its own assembly, and the aggregator
+invokes each module's `Collect` **once** from the flattened reference closure before a single
+materialization pass, duplicate registration cannot happen — including when `Shared` has no MEDI
+reference of its own and is only reachable through `A` and `B`'s references to it.
 
 ## Naming rules
 

@@ -16,6 +16,7 @@ package needs is generated into your project as `internal` code at compile time.
 - 🏷️ **Attribute-driven registration** — `[SingletonService]`, `[ScopedService<T>]`, `[TransientService]`, with optional keys for keyed services and automatic `AddHostedService` for `IHostedService` implementations.
 - 🔧 **`[Inject]` constructor generation** — annotate fields/properties; all `[Inject]` members of a partial class are grouped into **one** generated constructor with camelCase parameters and `[ActivatorUtilitiesConstructor]`.
 - 🧩 **Multi-project aware** — every project generates its own `Add{Assembly}Services()`; the host additionally gets `Add{Assembly}AllServices()` that chains every referenced project exactly once.
+- 🧬 **Works in projects with no MEDI reference at all** — a Domain/Application project that only declares interfaces and self-registers via `[Service<T>]`/lifetime attributes compiles cleanly with zero dependency on `Microsoft.Extensions.DependencyInjection`; the `IServiceCollection`-based methods appear only where a project actually references MEDI.
 - 🔒 **Required Scope Validation** — lock an interface's lifetime once with `[RequiredScope]` (or `[assembly: RequiredExternalScope]` for third-party types); `[Service<T>]` then resolves it automatically, and any explicit lifetime attribute that disagrees is a compile error — no more accidental captive dependencies (e.g. a `Scoped` `DbContext` registered as `Singleton`).
 - 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN010`), never silently wrong code.
 - 📦 **Pure generator package** — ships only an analyzer assembly; no `lib/`, no runtime dependency added to your app.
@@ -28,13 +29,13 @@ package needs is generated into your project as `internal` code at compile time.
 |---|---|
 | Consuming project TFM | net8.0, net10.0 (any TFM whose SDK ships Roslyn ≥ 4.8, i.e. .NET SDK 8+) |
 | Language version | C# 11+ for generic attributes (`[ScopedService<T>]`); non-generic attributes work on older versions |
-| Runtime package | Your project needs `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 8.0 (you already have it if you call `IServiceCollection`) |
+| Runtime package | Only needed where you call `IServiceCollection`: `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 8.0. A Domain/Application project with no MEDI reference at all still compiles — see [How it works](#how-it-works). |
 
 ## Installation
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.1" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.2" PrivateAssets="all" />
 </ItemGroup>
 ```
 
@@ -201,9 +202,16 @@ The package is an analyzer-only NuGet (`analyzers/dotnet/cs/`). At compile time 
 
 1. Embeds the `DIGen` attributes as `internal` types into your compilation.
 2. Scans classes with lifetime attributes → resolves `[Service<T>]` and validates locked scopes
-   (`[RequiredScope]` / `[assembly: RequiredExternalScope]`) → emits `Add{Assembly}Services()` in
-   the `Microsoft.Extensions.DependencyInjection` namespace, plus an assembly-level module marker.
-3. Reads module markers from referenced assemblies → emits `Add{Assembly}AllServices()`.
+   (`[RequiredScope]` / `[assembly: RequiredExternalScope]`) → emits `Collect{Assembly}Services(...)`
+   in the `Microsoft.Extensions.DependencyInjection` namespace, plus an assembly-level module marker
+   — **no reference to MEDI required for this step**. `Collect` builds a list of registrations as a
+   `(Type, Type, int, string?, bool)` tuple (framework types only), never an `IServiceCollection` call
+   directly.
+3. **Only if your project resolves MEDI**, additionally emits `Add{Assembly}Services(this IServiceCollection)`
+   (materializes its own `Collect` output) and, if it references other modules, the aggregator
+   `Add{Assembly}AllServices()` — which calls every referenced module's `Collect` method into one
+   combined list (each exactly once, even across diamond dependency graphs) and materializes once at
+   the end. A referenced module needs no MEDI reference of its own for this to work.
 4. Groups `[Inject]` members per class → emits one constructor per partial class.
 
 Because the generator itself targets `netstandard2.0` and compiles against Roslyn 4.8, it works

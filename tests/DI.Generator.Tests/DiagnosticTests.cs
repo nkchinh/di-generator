@@ -48,7 +48,9 @@ public class DiagnosticTests
             """);
 
         Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN001");
-        Assert.Contains("services.AddSingleton<global::Demo.IBase, global::Demo.Impl>();",
+        Assert.Contains(
+            "registrations.Add((typeof(global::Demo.IBase), typeof(global::Demo.Impl), " +
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
             outcome.GetSource("ServiceCollectionExtensions.g.cs"));
     }
 

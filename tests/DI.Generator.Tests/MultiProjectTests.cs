@@ -14,6 +14,14 @@ public class MultiProjectTests
         return MetadataReference.CreateFromImage(GeneratorTestHelper.EmitAssembly(outcome.OutputCompilation));
     }
 
+    private static MetadataReference BuildLibraryReferenceWithoutMedi(string source, string assemblyName)
+    {
+        var outcome = GeneratorTestHelper.Run(
+            source, assemblyName, baseReferences: GeneratorTestHelper.ReferencesWithoutMedi);
+        Assert.Empty(outcome.CompilationErrors);
+        return MetadataReference.CreateFromImage(GeneratorTestHelper.EmitAssembly(outcome.OutputCompilation));
+    }
+
     [Fact]
     public void Host_GeneratesAggregator_ChainingReferencedModulesAndOwnServices()
     {
@@ -44,9 +52,9 @@ public class MultiProjectTests
         Assert.Contains("AddMyCompanyHostAllServices(", source);
         Assert.Contains(
             "global::Microsoft.Extensions.DependencyInjection.MyCompanyInfrastructureServiceCollectionExtensions" +
-            ".AddMyCompanyInfrastructureServices(services);",
+            ".CollectMyCompanyInfrastructureServices(registrations);",
             source);
-        Assert.Contains("services.AddMyCompanyHostServices();", source);
+        Assert.Contains("CollectMyCompanyHostServices(registrations);", source);
         Assert.Empty(host.CompilationErrors);
     }
 
@@ -70,8 +78,8 @@ public class MultiProjectTests
 
         var source = host.GetSource(Hint);
         Assert.Contains("AddCompanyHostAllServices(", source);
-        Assert.Contains(".AddCompanyLibServices(services);", source);
-        Assert.DoesNotContain("services.AddCompanyHostServices();", source);
+        Assert.Contains(".CollectCompanyLibServices(registrations);", source);
+        Assert.DoesNotContain("CollectCompanyHostServices(registrations);", source);
         Assert.Empty(host.CompilationErrors);
     }
 
@@ -98,8 +106,8 @@ public class MultiProjectTests
             extraReferences: [betaRef, alphaRef]);
 
         var source = host.GetSource(Hint);
-        var alpha = source.IndexOf(".AddAlphaLibServices(services);", StringComparison.Ordinal);
-        var beta = source.IndexOf(".AddBetaLibServices(services);", StringComparison.Ordinal);
+        var alpha = source.IndexOf(".CollectAlphaLibServices(registrations);", StringComparison.Ordinal);
+        var beta = source.IndexOf(".CollectBetaLibServices(registrations);", StringComparison.Ordinal);
         Assert.True(alpha >= 0 && beta >= 0 && alpha < beta,
             $"Expected AlphaLib before BetaLib. alpha={alpha}, beta={beta}");
         Assert.Empty(host.CompilationErrors);
@@ -148,7 +156,8 @@ public class MultiProjectTests
 
         Assert.Empty(infrastructure.GeneratorDiagnostics);
         Assert.Contains(
-            "services.AddScoped<global::Domain.IOrderRepository, global::Infrastructure.SqlOrderRepository>();",
+            "registrations.Add((typeof(global::Domain.IOrderRepository), typeof(global::Infrastructure.SqlOrderRepository), " +
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
             infrastructure.GetSource(Hint));
         Assert.Empty(infrastructure.CompilationErrors);
     }
@@ -182,8 +191,59 @@ public class MultiProjectTests
 
         Assert.Empty(host.GeneratorDiagnostics);
         Assert.Contains(
-            "services.AddSingleton<global::ThirdParty.IConnection, global::HostApp.RedisConnection>();",
+            "registrations.Add((typeof(global::ThirdParty.IConnection), typeof(global::HostApp.RedisConnection), " +
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
             host.GetSource(Hint));
+        Assert.Empty(host.CompilationErrors);
+    }
+
+    [Fact]
+    public void Aggregator_CallsMediFreeSharedModule_ExactlyOnce_EvenReferencedByTwoProjects()
+    {
+        // Diamond: Host -> A -> Shared, Host -> B -> Shared. Shared has no MEDI reference (only
+        // [RequiredScope] + [Service<T>] self-registration). The aggregator must call Shared's
+        // Collect method exactly once — never once per path that reaches it.
+        var sharedRef = BuildLibraryReferenceWithoutMedi("""
+            using DIGen;
+
+            namespace Shared;
+
+            [RequiredScope(DiServiceScope.Scoped)]
+            public interface ISharedRepo { }
+
+            [Service<ISharedRepo>]
+            public class SharedRepo : ISharedRepo { }
+            """,
+            assemblyName: "Shared.Lib");
+
+        var aRef = BuildLibraryReference("""
+            using DIGen;
+
+            namespace A;
+
+            [SingletonService]
+            public class AThing { }
+            """,
+            assemblyName: "A.Lib");
+
+        var bRef = BuildLibraryReference("""
+            using DIGen;
+
+            namespace B;
+
+            [SingletonService]
+            public class BThing { }
+            """,
+            assemblyName: "B.Lib");
+
+        var host = GeneratorTestHelper.Run(
+            "namespace HostApp;",
+            assemblyName: "Diamond.Host",
+            extraReferences: [sharedRef, aRef, bRef]);
+
+        var source = host.GetSource(Hint);
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(source, "CollectSharedLibServices").Count;
+        Assert.Equal(1, occurrences);
         Assert.Empty(host.CompilationErrors);
     }
 }

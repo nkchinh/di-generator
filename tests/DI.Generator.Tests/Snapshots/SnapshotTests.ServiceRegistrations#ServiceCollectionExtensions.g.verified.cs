@@ -3,7 +3,7 @@
 #nullable enable
 #pragma warning disable
 
-[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute("AddSnapshotAssemblyServices", "Microsoft.Extensions.DependencyInjection.SnapshotAssemblyServiceCollectionExtensions")]
+[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute("CollectSnapshotAssemblyServices", "Microsoft.Extensions.DependencyInjection.SnapshotAssemblyServiceCollectionExtensions")]
 
 namespace Microsoft.Extensions.DependencyInjection
 {
@@ -14,14 +14,24 @@ namespace Microsoft.Extensions.DependencyInjection
     public static class SnapshotAssemblyServiceCollectionExtensions
     {
         /// <summary>
+        /// Collects all services declared with DIGen attributes in assembly 'Snapshot.Assembly' as plain
+        /// data, requiring no reference to Microsoft.Extensions.DependencyInjection.
+        /// </summary>
+        public static void CollectSnapshotAssemblyServices(global::System.Collections.Generic.ICollection<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)
+        {
+            registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), (int)global::DIGen.DiServiceScope.Scoped, null, false));
+            registrations.Add((typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), (int)global::DIGen.DiServiceScope.Transient, null, false));
+            registrations.Add((typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), (int)global::DIGen.DiServiceScope.Singleton, "stripe", false));
+        }
+
+        /// <summary>
         /// Registers all services declared with DIGen attributes in assembly 'Snapshot.Assembly'.
         /// </summary>
         public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddSnapshotAssemblyServices(this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services)
         {
-            services.AddScoped<global::Demo.IOrderRepository, global::Demo.OrderRepository>();
-            services.AddTransient<global::Demo.ScratchBuffer>();
-            services.AddKeyedSingleton<global::Demo.IPaymentGateway, global::Demo.StripeGateway>("stripe");
-            return services;
+            var registrations = new global::System.Collections.Generic.List<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)>();
+            CollectSnapshotAssemblyServices(registrations);
+            return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);
         }
     }
 }

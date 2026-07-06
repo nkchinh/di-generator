@@ -25,18 +25,46 @@ internal static class GeneratorTestHelper
 
     public static ImmutableArray<MetadataReference> References => LazyReferences.Value;
 
+    private static readonly Lazy<ImmutableArray<MetadataReference>> LazyReferencesWithoutMedi = new(static () =>
+    {
+        // The test project itself references MEDI/Hosting (needed for the default References set
+        // above), so both DLLs are already present in TRUSTED_PLATFORM_ASSEMBLIES regardless — they
+        // must be explicitly excluded, not just "not appended", to truly simulate a MEDI-free project.
+        var excludedPaths = new[]
+        {
+            typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location,
+            typeof(Microsoft.Extensions.Hosting.IHostedService).Assembly.Location,
+        };
+
+        var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+            .Split(Path.PathSeparator)
+            .Where(static p => !string.IsNullOrWhiteSpace(p))
+            .Where(p => !excludedPaths.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        return paths
+            .Select(static p => (MetadataReference)MetadataReference.CreateFromFile(p))
+            .ToImmutableArray();
+    });
+
+    /// <summary>Core BCL only — no Microsoft.Extensions.DependencyInjection/Hosting — for proving the
+    /// generator works in projects that don't reference MEDI at all.</summary>
+    public static ImmutableArray<MetadataReference> ReferencesWithoutMedi => LazyReferencesWithoutMedi.Value;
+
     public static CSharpCompilation CreateCompilation(
         IEnumerable<string> sources,
         string assemblyName = "TestAssembly",
-        IEnumerable<MetadataReference>? extraReferences = null)
+        IEnumerable<MetadataReference>? extraReferences = null,
+        ImmutableArray<MetadataReference>? baseReferences = null)
     {
         var trees = sources.Select((s, i) =>
             CSharpSyntaxTree.ParseText(s, ParseOptions, path: $"TestSource{i}.cs"));
 
+        var references = baseReferences ?? References;
         return CSharpCompilation.Create(
             assemblyName,
             trees,
-            extraReferences is null ? References : References.AddRange(extraReferences),
+            extraReferences is null ? references : references.AddRange(extraReferences),
             new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
                 nullableContextOptions: NullableContextOptions.Enable));
@@ -45,15 +73,17 @@ internal static class GeneratorTestHelper
     public static GeneratorRunOutcome Run(
         string source,
         string assemblyName = "TestAssembly",
-        IEnumerable<MetadataReference>? extraReferences = null)
-        => Run([source], assemblyName, extraReferences);
+        IEnumerable<MetadataReference>? extraReferences = null,
+        ImmutableArray<MetadataReference>? baseReferences = null)
+        => Run([source], assemblyName, extraReferences, baseReferences);
 
     public static GeneratorRunOutcome Run(
         IEnumerable<string> sources,
         string assemblyName = "TestAssembly",
-        IEnumerable<MetadataReference>? extraReferences = null)
+        IEnumerable<MetadataReference>? extraReferences = null,
+        ImmutableArray<MetadataReference>? baseReferences = null)
     {
-        var compilation = CreateCompilation(sources, assemblyName, extraReferences);
+        var compilation = CreateCompilation(sources, assemblyName, extraReferences, baseReferences);
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [new DependencyInjectionGenerator().AsSourceGenerator()],

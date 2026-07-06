@@ -12,12 +12,19 @@ internal static class Emitters
 
     // ---------------------------------------------------------------- registrations
 
+    // Framework-types-only tuple: identical across every assembly, unlike a project-embedded class or enum,
+    // so passing it as a Collect{Assembly}Services parameter works safely across project references.
+    private const string DescriptorTupleFqn =
+        "(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)";
+    private const string DescriptorListFqn = "global::System.Collections.Generic.ICollection<" + DescriptorTupleFqn + ">";
+
     public static void EmitRegistrations(
         SourceProductionContext context,
         EquatableArray<ServiceResult> results,
         string assemblyName,
         EquatableArray<ModuleInfo> modules,
-        ExternalScopeRules externalScopeRules)
+        ExternalScopeRules externalScopeRules,
+        bool hasMedi)
     {
         ReportDiagnostics(context, results.Select(static r => r.Diagnostic));
         ReportDiagnostics(context, externalScopeRules.Diagnostics.Select(static d => (DiagnosticInfo?)d));
@@ -28,14 +35,15 @@ internal static class Emitters
         var services = ResolveValidServices(context, results, externalScopeByType);
         var hasOwnServices = services.Count > 0;
         var hasModules = modules.Count > 0;
-        if (!hasOwnServices && !hasModules)
+        if (!hasOwnServices && !(hasModules && hasMedi))
         {
             return;
         }
 
         var identifier = NameHelper.SanitizeAssemblyIdentifier(assemblyName);
         var className = identifier + "ServiceCollectionExtensions";
-        var methodName = "Add" + identifier + "Services";
+        var collectMethodName = "Collect" + identifier + "Services";
+        var addMethodName = "Add" + identifier + "Services";
         var aggregatorName = "Add" + identifier + "AllServices";
 
         var builder = new StringBuilder();
@@ -45,7 +53,7 @@ internal static class Emitters
         {
             builder.AppendLine(
                 "[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute(" +
-                $"\"{methodName}\", \"Microsoft.Extensions.DependencyInjection.{className}\")]");
+                $"\"{collectMethodName}\", \"Microsoft.Extensions.DependencyInjection.{className}\")]");
             builder.AppendLine();
         }
 
@@ -61,20 +69,34 @@ internal static class Emitters
         if (hasOwnServices)
         {
             builder.AppendLine("        /// <summary>");
-            builder.AppendLine($"        /// Registers all services declared with DIGen attributes in assembly '{assemblyName}'.");
+            builder.AppendLine($"        /// Collects all services declared with DIGen attributes in assembly '{assemblyName}' as plain");
+            builder.AppendLine("        /// data, requiring no reference to Microsoft.Extensions.DependencyInjection.");
             builder.AppendLine("        /// </summary>");
-            builder.AppendLine($"        public static {ServiceCollectionFqn} {methodName}(this {ServiceCollectionFqn} services)");
+            builder.AppendLine($"        public static void {collectMethodName}({DescriptorListFqn} registrations)");
             builder.AppendLine("        {");
             foreach (var service in services)
             {
-                builder.AppendLine("            " + FormatRegistration(service));
+                builder.AppendLine("            " + FormatDescriptor(service));
             }
 
-            builder.AppendLine("            return services;");
             builder.AppendLine("        }");
+
+            if (hasMedi)
+            {
+                builder.AppendLine();
+                builder.AppendLine("        /// <summary>");
+                builder.AppendLine($"        /// Registers all services declared with DIGen attributes in assembly '{assemblyName}'.");
+                builder.AppendLine("        /// </summary>");
+                builder.AppendLine($"        public static {ServiceCollectionFqn} {addMethodName}(this {ServiceCollectionFqn} services)");
+                builder.AppendLine("        {");
+                builder.AppendLine($"            var registrations = new global::System.Collections.Generic.List<{DescriptorTupleFqn}>();");
+                builder.AppendLine($"            {collectMethodName}(registrations);");
+                builder.AppendLine("            return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);");
+                builder.AppendLine("        }");
+            }
         }
 
-        if (hasModules)
+        if (hasMedi && hasModules)
         {
             if (hasOwnServices)
             {
@@ -87,17 +109,18 @@ internal static class Emitters
             builder.AppendLine("        /// </summary>");
             builder.AppendLine($"        public static {ServiceCollectionFqn} {aggregatorName}(this {ServiceCollectionFqn} services)");
             builder.AppendLine("        {");
+            builder.AppendLine($"            var registrations = new global::System.Collections.Generic.List<{DescriptorTupleFqn}>();");
             foreach (var module in modules)
             {
-                builder.AppendLine($"            global::{module.ExtensionsTypeName}.{module.MethodName}(services);");
+                builder.AppendLine($"            global::{module.ExtensionsTypeName}.{module.MethodName}(registrations);");
             }
 
             if (hasOwnServices)
             {
-                builder.AppendLine($"            services.{methodName}();");
+                builder.AppendLine($"            {collectMethodName}(registrations);");
             }
 
-            builder.AppendLine("            return services;");
+            builder.AppendLine("            return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);");
             builder.AppendLine("        }");
         }
 
@@ -210,27 +233,22 @@ internal static class Emitters
         return resolved;
     }
 
-    private static string FormatRegistration(ServiceInfo service)
+    private static string FormatDescriptor(ServiceInfo service)
     {
         if (service.IsHostedService)
         {
-            return $"services.AddHostedService<{service.ImplementationFqn}>();";
+            // Hosted services always register as IHostedService, ignoring any TService/key —
+            // matches services.AddHostedService<Impl>() semantics.
+            return "registrations.Add((" +
+                $"typeof(global::Microsoft.Extensions.Hosting.IHostedService), typeof({service.ImplementationFqn}), " +
+                $"(int)global::DIGen.DiServiceScope.{service.Lifetime}, null, true));";
         }
 
         var target = service.ServiceFqn ?? service.ImplementationFqn;
-        var selfRegistration = target == service.ImplementationFqn;
-
-        if (service.Key is null)
-        {
-            return selfRegistration
-                ? $"services.Add{service.Lifetime}<{service.ImplementationFqn}>();"
-                : $"services.Add{service.Lifetime}<{target}, {service.ImplementationFqn}>();";
-        }
-
-        var keyLiteral = SymbolDisplay.FormatLiteral(service.Key, quote: true);
-        return selfRegistration
-            ? $"services.AddKeyed{service.Lifetime}<{service.ImplementationFqn}>({keyLiteral});"
-            : $"services.AddKeyed{service.Lifetime}<{target}, {service.ImplementationFqn}>({keyLiteral});";
+        var keyArg = service.Key is null ? "null" : SymbolDisplay.FormatLiteral(service.Key, quote: true);
+        return "registrations.Add((" +
+            $"typeof({target}), typeof({service.ImplementationFqn}), " +
+            $"(int)global::DIGen.DiServiceScope.{service.Lifetime}, {keyArg}, false));";
     }
 
     // ---------------------------------------------------------------- [Inject] constructors

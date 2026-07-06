@@ -42,15 +42,20 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .Select(static (compilation, _) => Parsers.GetExternalScopeRules(compilation))
             .WithTrackingName("ExternalScopeRules");
 
-        context.RegisterSourceOutput(
-            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules),
-            static (spc, input) => Emitters.EmitRegistrations(
-                spc, input.Left.Left.Left, input.Left.Left.Right, input.Left.Right, input.Right));
-
         var hasServiceLifetime = context.CompilationProvider
             .Select(static (compilation, _) =>
                 compilation.GetTypeByMetadataName("Microsoft.Extensions.DependencyInjection.ServiceLifetime") is not null)
             .WithTrackingName("HasServiceLifetime");
+
+        context.RegisterSourceOutput(
+            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules).Combine(hasServiceLifetime),
+            static (spc, input) => Emitters.EmitRegistrations(
+                spc,
+                input.Left.Left.Left.Left,
+                input.Left.Left.Left.Right,
+                input.Left.Left.Right,
+                input.Left.Right,
+                input.Right));
 
         context.RegisterSourceOutput(hasServiceLifetime, static (spc, hasServiceLifetime) =>
         {

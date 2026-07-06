@@ -19,9 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostics `DIGEN008` (`[Service<T>]` with no locked scope), `DIGEN009` (explicit lifetime
   disagrees with the lock), `DIGEN010` (conflicting `[assembly: RequiredExternalScope]`
   declarations for the same type reachable from one compilation).
+- Registration is now split into **Collect** (always emitted, no MEDI reference needed —
+  `Collect{Assembly}Services` builds a list of registrations as a framework-types-only tuple) and
+  **Materialize** (emitted only where the project resolves MEDI — applies the list to a real
+  `IServiceCollection`). This means a Domain/Application project that self-registers via
+  `[Service<T>]`/lifetime attributes compiles with **zero reference** to
+  `Microsoft.Extensions.DependencyInjection`, not just one that carries `[RequiredScope]` markers.
+  `Add{Assembly}Services`/`Add{Assembly}AllServices` are unchanged from the outside — this is an
+  internal restructuring, not a breaking change to the generated public API.
 - `DiServiceScopeExtensions.ToServiceLifetime()`, embedded only in projects that already
-  reference `Microsoft.Extensions.DependencyInjection` (so the core `DiServiceScope` enum keeps
-  working in MEDI-free Domain/Application projects).
+  reference `Microsoft.Extensions.DependencyInjection`.
 
 ## [0.0.0] - 2026-07-03
 

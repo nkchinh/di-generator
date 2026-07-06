@@ -32,6 +32,7 @@ method in `Program.cs` — with no runtime assembly added to their dependency gr
 | A8 | `RequiredScope`/`RequiredExternalScope` validation only covers registrations with an explicit `TService` (`[XxxService<T>]`, `[Service<T>]`) | Non-generic self-registration has no `TService` to look up a lock by. |
 | A9 | `DiServiceScope`/`RequiredScopeAttribute`/`RequiredExternalScopeAttribute`/`ServiceAttribute<T>` are always embedded (no MEDI dependency); `DiServiceScopeExtensions.ToServiceLifetime()` is embedded **only** when the compilation can resolve `Microsoft.Extensions.DependencyInjection.ServiceLifetime` | Reconciles "must work in MEDI-free Domain/Application projects" with "must expose a mapping to MEDI's `ServiceLifetime`" — the mapping is only meaningful (and only compiles) where MEDI is already referenced, which the Host always does. |
 | A10 | Conflicting `[assembly: RequiredExternalScope]` locks for the same type (different lifetimes, both reachable from the current compilation) are a compile **error** (DIGEN010), not a silent last-wins | Matches the feature's purpose — surface misconfiguration instead of guessing. |
+| A11 | Registration is split into **Collect** (always emitted, no MEDI needed) and **Materialize** (MEDI only): `Collect{X}Services` builds a list of registrations as a `(Type, Type, int, string?, bool)` tuple — framework types only, never a project-embedded class/enum — so it's callable across project references; `Add{X}Services`/`Add{X}AllServices` (MEDI only) call it and materialize into a real `IServiceCollection` | This is what actually makes A9 true for a project that *also* self-registers via `[Service<T>]`/`[XxxService<T>]` (not just one that carries markers only). A project-embedded type used as a cross-assembly method parameter would have different identity per assembly and fail to compile — the tuple is the fix. |
 
 ## Tech Stack
 
@@ -101,14 +102,15 @@ Prevents captive-dependency bugs (e.g. a `Scoped` `DbContext` registered as `Sin
 
 ### Service registration
 
-* Per assembly, emit `public static class {SanitizedAssemblyName}ServiceCollectionExtensions` with
-  `Add{SanitizedAssemblyName}Services(this IServiceCollection services)`.
-  * `MyCompany.Infrastructure` → `AddMyCompanyInfrastructureServices`. Sanitization: split on non-alphanumeric, PascalCase-join, prefix `_` if leading digit.
-* `[XxxService]` → `services.AddXxx<Impl>()`; `[XxxService<TService>]` → `services.AddXxx<TService, Impl>()`; key → `AddKeyedXxx(..., "key")`.
-* `[Service<TService>]` → same as `[XxxService<TService>]`, but `Xxx` is resolved from `TService`'s locked scope instead of being spelled out — see [Required Scope Validation](#required-scope-validation).
-* Classes implementing `Microsoft.Extensions.Hosting.IHostedService` → `services.AddHostedService<Impl>()`.
-* Registrations sorted by implementation FQN → deterministic output.
-* Abstract classes are skipped with a warning; a class may carry exactly one lifetime attribute.
+Per assembly with at least one service, emit `public static class {SanitizedAssemblyName}ServiceCollectionExtensions` (`MyCompany.Infrastructure` → sanitized to `MyCompanyInfrastructure`; split on non-alphanumeric, PascalCase-join, prefix `_` if leading digit) with up to three members:
+
+* **`Collect{X}Services(ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)`** — always emitted, regardless of whether the project references MEDI. One tuple per service (`Lifetime` is `DiServiceScope`'s underlying `int`; hosted services set `ServiceType` to `typeof(IHostedService)` directly, `IsHostedService = true`, ignoring any `TService`/key). The tuple uses only framework types so it's safe as a cross-project method parameter — a project-embedded type would have different identity per assembly and fail to compile.
+* **`Add{X}Services(this IServiceCollection services)`** — emitted only when the project resolves MEDI. Builds a list, calls `Collect{X}Services`, materializes it.
+* **`Add{X}AllServices(this IServiceCollection services)`** — the aggregator (see below).
+
+`[Service<TService>]` collects the same way as `[XxxService<TService>]`, with `Lifetime` resolved from `TService`'s locked scope instead of being spelled out by the attribute — see [Required Scope Validation](#required-scope-validation). Registrations are sorted by implementation FQN → deterministic output. Abstract classes are skipped with a warning; a class may carry exactly one lifetime attribute.
+
+Materialization (embedded only when MEDI is resolvable, alongside `DiServiceScopeExtensions`): `IServiceCollection.MaterializeServices(IEnumerable<(...)> registrations)` loops the tuples — hosted services go through `TryAddEnumerable(ServiceDescriptor.Singleton(...))` (matching `AddHostedService<T>()`'s dedup semantics without ever referencing the Hosting package); everything else becomes a keyed or non-keyed `ServiceDescriptor` via the (`Type`, `Type`, `ServiceLifetime`) or (`Type`, key, `Type`, `ServiceLifetime`) constructor.
 
 ### Constructor injection (`[Inject]`)
 
@@ -119,9 +121,16 @@ Prevents captive-dependency bugs (e.g. a `Scoped` `DbContext` registered as `Sin
 
 ### Multi-project aggregation
 
-* Every assembly that generated a registration method also emits the assembly-level module marker.
-* Any project whose references contain markers gets `Add{X}AllServices(this IServiceCollection)` that invokes
-  each referenced module's method once (sorted by method name) and finally its own `Add{X}Services` if present.
+* Every assembly with its own services emits the assembly-level module marker naming its
+  `Collect{X}Services` method (not `Add`) — so the marker itself needs no MEDI reference either.
+* Any project that both resolves MEDI and whose references contain markers gets
+  `Add{X}AllServices(this IServiceCollection)`: it builds **one** registration list, calls every
+  referenced module's `Collect` method into it exactly once (sorted by method name), calls its own
+  `Collect{X}Services` if it has own services, then materializes **once** at the end. A module with
+  no MEDI reference of its own (only `Collect`, no `Add`) integrates exactly the same way as one that
+  has — the aggregator never calls a module's `Add` method, only `Collect`, so there is no risk of a
+  shared MEDI-free module being materialized twice through two different consumers (diamond-safe by
+  construction, not by coincidence).
 
 ## Diagnostics
 
@@ -171,9 +180,11 @@ Category `NkChinh.DI.Generator`, `helpLinkUri` → docs/diagnostics.md anchors.
 4. Every diagnostic in the table above has at least one test proving it fires (and one proving it doesn't misfire).
 5. All project-specific naming from the legacy file is gone; naming derives from `AssemblyName` or is a documented fixed contract.
 6. `[Service<T>]` correctly resolves its lifetime across project boundaries (interface locked in one project, registration in another, external-scope lock in a third) — proven by an integration test, not just a unit test.
+7. A project with only `[RequiredScope]`/`[RequiredExternalScope]` markers and a `[Service<T>]` self-registration compiles cleanly with **zero** reference to Microsoft.Extensions.DependencyInjection — proven by a unit test compiled against a reference set that excludes MEDI/Hosting entirely.
+8. A module with no MEDI reference, shared by two different MEDI-having projects that both feed into the same aggregator (diamond), has its `Collect` method invoked exactly once — proven by a unit test asserting the generated aggregator text.
 
 ## Open Questions
 
-None blocking — assumptions A1–A10 stand unless the user overrides them. A7–A10 (Required Scope
-Validation design) are freshly drafted and awaiting explicit confirmation before implementation
-starts (see PR/commit that introduces this section).
+None blocking — assumptions A1–A11 stand unless the user overrides them. Required Scope Validation
+(A7–A10) and the Collect/Materialize split (A11) are implemented and covered by tests per criteria
+6–8 above.

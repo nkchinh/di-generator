@@ -12,6 +12,7 @@ thiết được sinh vào project của bạn dưới dạng `internal` lúc co
 - 🏷️ **Đăng ký bằng attribute** — `[SingletonService]`, `[ScopedService<T>]`, `[TransientService]`; hỗ trợ keyed service qua tham số key; tự động dùng `AddHostedService` cho class implement `IHostedService`.
 - 🔧 **Sinh constructor từ `[Inject]`** — gắn lên field/property; mọi member `[Inject]` của một partial class được gom vào **duy nhất một** constructor, tham số đặt tên camelCase, kèm `[ActivatorUtilitiesConstructor]`.
 - 🧩 **Multi-project** — mỗi project sinh `Add{TênAssembly}Services()`; project host sinh thêm `Add{TênAssembly}AllServices()` nối chuỗi tất cả project được tham chiếu, mỗi module đúng một lần (an toàn với diamond dependency).
+- 🧬 **Chạy được ở project hoàn toàn không tham chiếu MEDI** — project Domain/Application chỉ khai báo interface và tự đăng ký qua `[Service<T>]`/attribute lifetime vẫn compile sạch dù không có bất kỳ dependency nào tới `Microsoft.Extensions.DependencyInjection`; các method dựa trên `IServiceCollection` chỉ xuất hiện ở project nào thực sự tham chiếu MEDI.
 - 🔒 **Required Scope Validation** — khóa lifetime của một interface đúng một lần bằng `[RequiredScope]` (hoặc `[assembly: RequiredExternalScope]` cho type bên thứ ba); `[Service<T>]` tự động suy ra lifetime đã khóa, còn attribute lifetime tường minh nào trái với khóa sẽ là lỗi biên dịch — hết lo lỗi captive dependency (vd `DbContext` Scoped bị đăng ký nhầm thành Singleton).
 - 🚨 **Diagnostic chuẩn compiler** — dùng sai là báo lỗi biên dịch (`DIGEN001`–`DIGEN010`).
 - 📦 **Gói NuGet thuần analyzer** — chỉ chứa assembly analyzer, không có `lib/`, không thêm dependency runtime nào.
@@ -20,11 +21,13 @@ thiết được sinh vào project của bạn dưới dạng `internal` lúc co
 ## Cài đặt
 
 ```xml
-<PackageReference Include="NkChinh.DI.Generator" Version="0.0.1" PrivateAssets="all" />
+<PackageReference Include="NkChinh.DI.Generator" Version="0.0.2" PrivateAssets="all" />
 ```
 
-Yêu cầu: .NET SDK 8+ (hỗ trợ project net8.0 và net10.0), C# 11+ cho generic attribute,
-và project của bạn tham chiếu `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 8.0.
+Yêu cầu: .NET SDK 8+ (hỗ trợ project net8.0 và net10.0), C# 11+ cho generic attribute.
+Chỉ project nào thực sự gọi `IServiceCollection` mới cần tham chiếu
+`Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 8.0 — project Domain/Application không
+tham chiếu MEDI vẫn compile sạch (xem [README.md](README.md#how-it-works)).
 
 ## Dùng nhanh
 

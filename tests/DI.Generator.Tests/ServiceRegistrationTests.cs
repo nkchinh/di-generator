@@ -35,8 +35,13 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains("services.AddSingleton<global::Demo.MemoryCache>();", source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Demo.MemoryCache), typeof(global::Demo.MemoryCache), " +
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
+            source);
         Assert.Contains("public static class TestAssemblyServiceCollectionExtensions", source);
+        Assert.Contains("CollectTestAssemblyServices(", source);
         Assert.Contains("AddTestAssemblyServices(", source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -56,7 +61,11 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains("services.AddScoped<global::Demo.IOrderRepository, global::Demo.OrderRepository>();", source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            source);
         Assert.Empty(outcome.CompilationErrors);
     }
 
@@ -75,7 +84,11 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains("services.AddTransient<global::Demo.NotificationChannel, global::Demo.EmailChannel>();", source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Demo.NotificationChannel), typeof(global::Demo.EmailChannel), " +
+            "(int)global::DIGen.DiServiceScope.Transient, null, false));",
+            source);
         Assert.Empty(outcome.CompilationErrors);
     }
 
@@ -97,8 +110,16 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains("services.AddKeyedSingleton<global::Demo.IPaymentGateway, global::Demo.StripeGateway>(\"stripe\");", source);
-        Assert.Contains("services.AddKeyedTransient<global::Demo.ScratchBuffer>(\"mem\");", source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), " +
+            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false));",
+            source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), " +
+            "(int)global::DIGen.DiServiceScope.Transient, \"mem\", false));",
+            source);
         Assert.Empty(outcome.CompilationErrors);
     }
 
@@ -121,8 +142,11 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains("services.AddHostedService<global::Demo.Worker>();", source);
-        Assert.DoesNotContain("AddSingleton<global::Demo.Worker>", source);
+        Assert.Contains(
+            "registrations.Add((" +
+            "typeof(global::Microsoft.Extensions.Hosting.IHostedService), typeof(global::Demo.Worker), " +
+            "(int)global::DIGen.DiServiceScope.Singleton, null, true));",
+            source);
         Assert.Empty(outcome.CompilationErrors);
     }
 
@@ -160,7 +184,7 @@ public class ServiceRegistrationTests
         var source = outcome.GetSource(Hint);
         Assert.Contains(
             "[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute(" +
-            "\"AddTestAssemblyServices\", " +
+            "\"CollectTestAssemblyServices\", " +
             "\"Microsoft.Extensions.DependencyInjection.TestAssemblyServiceCollectionExtensions\")]",
             source);
         Assert.Empty(outcome.CompilationErrors);
