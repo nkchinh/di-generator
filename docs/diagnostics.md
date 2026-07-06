@@ -72,3 +72,51 @@ A class may carry exactly one lifetime attribute. Combining `[SingletonService]`
 
 `[Inject]` members inside structs, record structs, or interfaces are not supported: the DI
 container activates classes, and struct constructor semantics differ.
+
+## DIGEN008
+
+**[Service<T>] used but T has no locked scope** — Error
+
+`[Service<TService>]` registers a class using whatever lifetime `TService` is locked to via
+`[RequiredScope]` (on the interface) or `[assembly: RequiredExternalScope]` (for a type the
+project doesn't own). If neither lock exists, there's nothing to resolve the lifetime from.
+
+```csharp
+public interface IOrderRepository { }   // no [RequiredScope]
+
+[Service<IOrderRepository>]             // DIGEN008: IOrderRepository has no locked scope
+public class OrderRepository : IOrderRepository { }
+```
+
+**Fix:** add `[RequiredScope(DiServiceScope.Scoped)]` to `IOrderRepository` (or an
+`[assembly: RequiredExternalScope(typeof(IOrderRepository), DiServiceScope.Scoped)]` if you
+don't own the interface), or use an explicit `[SingletonService<T>]` / `[ScopedService<T>]` /
+`[TransientService<T>]` instead.
+
+## DIGEN009
+
+**Lifetime attribute disagrees with the locked scope** — Error
+
+`TService` is locked to a lifetime (via `[RequiredScope]` or `[assembly: RequiredExternalScope]`),
+but the registration attribute specifies a different one.
+
+```csharp
+[RequiredScope(DiServiceScope.Scoped)]
+public interface IOrderRepository { }
+
+[SingletonService<IOrderRepository>]    // DIGEN009: locked to Scoped, not Singleton
+public class OrderRepository : IOrderRepository { }
+```
+
+**Fix:** match the attribute's lifetime to the lock, or use `[Service<T>]` to have it resolved
+automatically.
+
+## DIGEN010
+
+**Conflicting RequiredExternalScope declarations** — Error
+
+Two `[assembly: RequiredExternalScope]` declarations, both reachable from the current project
+(directly or through project references), lock the same type to different lifetimes.
+
+**Fix:** keep exactly one `[assembly: RequiredExternalScope]` declaration per external type across
+the whole solution.

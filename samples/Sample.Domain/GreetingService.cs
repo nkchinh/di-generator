@@ -13,6 +13,7 @@ public class GreetingService : IGreetingService
     public string Greet(string name) => $"Hello, {name}!";
 }
 
+[RequiredScope(DiServiceScope.Scoped)]
 public interface IOrderRepository
 {
     IReadOnlyList<string> GetOrders();

@@ -96,6 +96,70 @@ namespace DIGen
     internal sealed class InjectAttribute : global::System.Attribute
     {
     }
+
+    /// <summary>Lifetime values used by scope-locking attributes; independent of any DI package.</summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    internal enum DiServiceScope
+    {
+        Singleton = 0,
+        Scoped = 1,
+        Transient = 2,
+    }
+
+    /// <summary>
+    /// Locks the lifetime any registration of this interface must use. Combine with
+    /// <see cref="ServiceAttribute{TService}"/> to have the lifetime resolved automatically, or with
+    /// an explicit lifetime attribute to have it checked for you.
+    /// </summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    [global::System.AttributeUsage(global::System.AttributeTargets.Interface, AllowMultiple = false, Inherited = false)]
+    internal sealed class RequiredScopeAttribute : global::System.Attribute
+    {
+        public RequiredScopeAttribute(DiServiceScope lifetime)
+        {
+            Lifetime = lifetime;
+        }
+
+        public DiServiceScope Lifetime { get; }
+    }
+
+    /// <summary>
+    /// Locks the lifetime a type this project doesn't own (a third-party interface, a <c>DbContext</c>, …)
+    /// must use. Apply at assembly level in any project that directly references the type, so the
+    /// type's own project never needs a dependency on it.
+    /// </summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    [global::System.AttributeUsage(global::System.AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
+    internal sealed class RequiredExternalScopeAttribute : global::System.Attribute
+    {
+        public RequiredExternalScopeAttribute(global::System.Type interfaceType, DiServiceScope lifetime)
+        {
+            InterfaceType = interfaceType;
+            Lifetime = lifetime;
+        }
+
+        public global::System.Type InterfaceType { get; }
+
+        public DiServiceScope Lifetime { get; }
+    }
+
+    /// <summary>
+    /// Registers the class as <typeparamref name="TService"/> using whatever lifetime
+    /// <typeparamref name="TService"/> is locked to via <see cref="RequiredScopeAttribute"/> or
+    /// <see cref="RequiredExternalScopeAttribute"/>.
+    /// </summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    [global::System.AttributeUsage(global::System.AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+    internal sealed class ServiceAttribute<TService> : global::System.Attribute
+        where TService : class
+    {
+        /// <summary>Optional service key; when set, the service is registered as a keyed service.</summary>
+        public string? Key { get; }
+
+        public ServiceAttribute() { }
+
+        public ServiceAttribute(string key) { Key = key; }
+    }
 }
 
 namespace DIGen.Generated

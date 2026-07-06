@@ -16,7 +16,8 @@ package needs is generated into your project as `internal` code at compile time.
 - 🏷️ **Attribute-driven registration** — `[SingletonService]`, `[ScopedService<T>]`, `[TransientService]`, with optional keys for keyed services and automatic `AddHostedService` for `IHostedService` implementations.
 - 🔧 **`[Inject]` constructor generation** — annotate fields/properties; all `[Inject]` members of a partial class are grouped into **one** generated constructor with camelCase parameters and `[ActivatorUtilitiesConstructor]`.
 - 🧩 **Multi-project aware** — every project generates its own `Add{Assembly}Services()`; the host additionally gets `Add{Assembly}AllServices()` that chains every referenced project exactly once.
-- 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN007`), never silently wrong code.
+- 🔒 **Required Scope Validation** — lock an interface's lifetime once with `[RequiredScope]` (or `[assembly: RequiredExternalScope]` for third-party types); `[Service<T>]` then resolves it automatically, and any explicit lifetime attribute that disagrees is a compile error — no more accidental captive dependencies (e.g. a `Scoped` `DbContext` registered as `Singleton`).
+- 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN010`), never silently wrong code.
 - 📦 **Pure generator package** — ships only an analyzer assembly; no `lib/`, no runtime dependency added to your app.
 - 🌱 **Trimming & Native AOT friendly** — registrations are plain `services.Add{Lifetime}<...>()` calls generated at compile time, not reflection over your assemblies at startup, so there's nothing for the trimmer to break and nothing incompatible with Native AOT.
 - ⚡ **Fully incremental** (`IIncrementalGenerator`) — cache-friendly pipelines, fast IDE experience.
@@ -33,7 +34,7 @@ package needs is generated into your project as `internal` code at compile time.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.0" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.1" PrivateAssets="all" />
 </ItemGroup>
 ```
 
@@ -114,6 +115,40 @@ builder.Services.AddMyCompanyApiAllServices(); // one call registers everything
 See [docs/multi-project.md](docs/multi-project.md) for details and the [samples](samples) folder
 for a working three-project solution.
 
+### Required Scope Validation
+
+Lock an interface's lifetime once, then never worry about a class registering it with the wrong
+one (the classic captive-dependency bug — a `Scoped` repository accidentally registered as
+`Singleton`):
+
+```csharp
+using DIGen;
+
+// Locks IOrderRepository to Scoped — declared once, wherever the interface lives.
+[RequiredScope(DiServiceScope.Scoped)]
+public interface IOrderRepository { /* ... */ }
+
+// Resolves its lifetime from the lock automatically — no lifetime to get wrong.
+[Service<IOrderRepository>]
+public class SqlOrderRepository : IOrderRepository { /* ... */ }
+
+// A mismatched explicit attribute is a compile error (DIGEN009):
+[SingletonService<IOrderRepository>]   // error: locked to Scoped, not Singleton
+public class Wrong : IOrderRepository { /* ... */ }
+```
+
+For a type you don't own (a third-party interface, a `DbContext`, `StackExchange.Redis.IConnectionMultiplexer`, …),
+lock it from whichever project already references that library — the owning project never needs
+the dependency:
+
+```csharp
+// In the project that references StackExchange.Redis:
+[assembly: RequiredExternalScope(typeof(IConnectionMultiplexer), DiServiceScope.Singleton)]
+```
+
+`[RequiredScope]` on the type itself always wins if both are present. See
+[docs/diagnostics.md](docs/diagnostics.md) for `DIGEN008`–`DIGEN010`.
+
 ## Attributes reference
 
 All attributes live in the `DIGen` namespace and are embedded into your project as `internal`
@@ -126,6 +161,9 @@ types (no runtime dependency):
 | `[...Service("key")]` | `services.AddKeyed{Lifetime}(...)` |
 | any of the above on an `IHostedService` implementation | `services.AddHostedService<Impl>()` |
 | `[Inject]` on a field/property | parameter of the single generated constructor |
+| `[RequiredScope(DiServiceScope)]` on an interface | locks the lifetime any registration of it must use |
+| `[assembly: RequiredExternalScope(typeof(T), DiServiceScope)]` | locks the lifetime for a type you don't own |
+| `[Service<TService>]` | registers using whatever lifetime `TService` is locked to |
 
 ## Diagnostics
 
@@ -138,6 +176,9 @@ types (no runtime dependency):
 | `DIGEN005` | Warning | Lifetime attribute on an abstract class (ignored) |
 | `DIGEN006` | Error | Multiple lifetime attributes on one class |
 | `DIGEN007` | Error | `[Inject]` inside a non-class type |
+| `DIGEN008` | Error | `[Service<T>]` used but `T` has no locked scope |
+| `DIGEN009` | Error | An explicit lifetime attribute disagrees with `T`'s locked scope |
+| `DIGEN010` | Error | Two `[assembly: RequiredExternalScope]` declarations lock the same type differently |
 
 Full descriptions and fixes: [docs/diagnostics.md](docs/diagnostics.md).
 
@@ -159,8 +200,9 @@ Full descriptions and fixes: [docs/diagnostics.md](docs/diagnostics.md).
 The package is an analyzer-only NuGet (`analyzers/dotnet/cs/`). At compile time it:
 
 1. Embeds the `DIGen` attributes as `internal` types into your compilation.
-2. Scans classes with lifetime attributes → emits `Add{Assembly}Services()` in the
-   `Microsoft.Extensions.DependencyInjection` namespace, plus an assembly-level module marker.
+2. Scans classes with lifetime attributes → resolves `[Service<T>]` and validates locked scopes
+   (`[RequiredScope]` / `[assembly: RequiredExternalScope]`) → emits `Add{Assembly}Services()` in
+   the `Microsoft.Extensions.DependencyInjection` namespace, plus an assembly-level module marker.
 3. Reads module markers from referenced assemblies → emits `Add{Assembly}AllServices()`.
 4. Groups `[Inject]` members per class → emits one constructor per partial class.
 

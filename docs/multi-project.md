@@ -62,6 +62,19 @@ uppercase each segment's first letter, join. Examples:
 > ⚠️ Two assemblies that sanitize to the same identifier (e.g. `My.Lib` and `My_Lib`) would
 > produce colliding extension class names. Rename one assembly if you hit this.
 
+## Required Scope Validation across projects
+
+`[assembly: RequiredExternalScope(typeof(T), DiServiceScope)]` uses the same reachability as the
+module markers above: the generator scans the current assembly's own attributes plus every
+referenced assembly's (directly or transitively), so a lock declared in one project is honored by
+a `[Service<T>]` or explicit lifetime attribute in any other project that references it —
+including the project that owns `T` itself needing no dependency on whatever library `T` came from.
+
+If two reachable assemblies lock the same type to different lifetimes, that's `DIGEN010`, not a
+silent pick — keep exactly one `[assembly: RequiredExternalScope]` declaration per external type
+across the whole solution. A `[RequiredScope]` declared directly on `T` always takes precedence
+over any `[assembly: RequiredExternalScope]` for the same type.
+
 ## Checklist
 
 - Install the package (or analyzer `ProjectReference`) in **every** project that declares

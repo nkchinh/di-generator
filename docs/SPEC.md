@@ -28,6 +28,10 @@ method in `Program.cs` — with no runtime assembly added to their dependency gr
 | A4 | Per-project method registers **only that project's own services**; the aggregator (`Add{X}AllServices`) chains each referenced module **exactly once** | Prevents duplicate registrations in diamond dependency graphs. |
 | A5 | License **MIT**, author `NkChinh`, repo URL `https://github.com/nkchinh/di-generator` (placeholder) | Standard OSS defaults; trivially changeable in one place. |
 | A6 | Consuming projects must reference `Microsoft.Extensions.DependencyInjection.Abstractions` >= 8.0 | Required anyway to call `IServiceCollection`; keyed services & `ActivatorUtilitiesConstructor` need 8.0+. The generator package itself brings no dependency. |
+| A7 | Required Scope Validation diagnostics continue the existing **`DIGEN`** numbering (`DIGEN008`–`DIGEN010`), same category `NkChinh.DI.Generator` | One diagnostic family for the whole generator, per project convention — no second prefix. |
+| A8 | `RequiredScope`/`RequiredExternalScope` validation only covers registrations with an explicit `TService` (`[XxxService<T>]`, `[Service<T>]`) | Non-generic self-registration has no `TService` to look up a lock by. |
+| A9 | `DiServiceScope`/`RequiredScopeAttribute`/`RequiredExternalScopeAttribute`/`ServiceAttribute<T>` are always embedded (no MEDI dependency); `DiServiceScopeExtensions.ToServiceLifetime()` is embedded **only** when the compilation can resolve `Microsoft.Extensions.DependencyInjection.ServiceLifetime` | Reconciles "must work in MEDI-free Domain/Application projects" with "must expose a mapping to MEDI's `ServiceLifetime`" — the mapping is only meaningful (and only compiles) where MEDI is already referenced, which the Host always does. |
+| A10 | Conflicting `[assembly: RequiredExternalScope]` locks for the same type (different lifetimes, both reachable from the current compilation) are a compile **error** (DIGEN010), not a silent last-wins | Matches the feature's purpose — surface misconfiguration instead of guessing. |
 
 ## Tech Stack
 
@@ -63,10 +67,35 @@ Namespace `DIGen`:
 * `SingletonServiceAttribute`, `ScopedServiceAttribute`, `TransientServiceAttribute` — self-registration; optional `string key` ctor arg → keyed service.
 * `SingletonServiceAttribute<TService>`, `ScopedServiceAttribute<TService>`, `TransientServiceAttribute<TService>` — register as `TService`; optional key.
 * `InjectAttribute` — on instance fields/properties of a `partial` class.
+* `DiServiceScope` — `{ Singleton = 0, Scoped = 1, Transient = 2 }`. See [Required Scope Validation](#required-scope-validation).
+* `RequiredScopeAttribute(DiServiceScope)` — on an interface, locks the lifetime any registration of that interface must use.
+* `RequiredExternalScopeAttribute(Type, DiServiceScope)` — assembly-level; locks the lifetime for a type the current project doesn't own (third-party interface/`DbContext`/etc.).
+* `ServiceAttribute<TService>` — registers the class as `TService` using whatever lifetime `TService` is locked to; optional key. Requires a lock to exist (see DIGEN008).
+
+Conditionally embedded (only when the compilation can resolve `Microsoft.Extensions.DependencyInjection.ServiceLifetime`, i.e. the project already references MEDI — see A9):
+
+* `DiServiceScopeExtensions.ToServiceLifetime(this DiServiceScope)` → `Microsoft.Extensions.DependencyInjection.ServiceLifetime`.
 
 Namespace `DIGen.Generated` (infrastructure):
 
 * `ServiceRegistrationModuleAttribute(string methodName, string extensionsTypeFqn)` — assembly-level marker emitted per module; consumed by referencing hosts to build the aggregator.
+
+## Required Scope Validation
+
+Prevents captive-dependency bugs (e.g. a `Scoped` `DbContext` registered as `Singleton`) with a compile-time lock-and-check mechanism.
+
+**Locking a lifetime for a type:**
+1. `[RequiredScope(DiServiceScope.Scoped)]` directly on an interface the project owns.
+2. `[assembly: RequiredExternalScope(typeof(SomeThirdPartyType), DiServiceScope.Singleton)]` for a type the project doesn't own — declared in any project that references the third-party library, so the owning (e.g. Domain) project never needs that reference.
+
+**Resolution precedence** when a registration names `TService`: (1) `TService`'s own `[RequiredScope]` wins; (2) else an `[assembly: RequiredExternalScope(typeof(TService), ...)]` visible from the current compilation — its own assembly attributes plus every referenced assembly's (same reachability the existing module-marker scan already uses, so it works transitively across project references); (3) else `TService` has no lock.
+
+**Checks:**
+* `[Service<TService>]` — auto-registers using the locked lifetime. No lock found → **DIGEN008** (use an explicit `[SingletonService<T>]`/`[ScopedService<T>]`/`[TransientService<T>]` instead).
+* `[SingletonService<T>]` / `[ScopedService<T>]` / `[TransientService<T>]` — if `T` has a lock and the attribute's lifetime disagrees → **DIGEN009**.
+* Two reachable `[assembly: RequiredExternalScope]` declarations lock the same type to different lifetimes → **DIGEN010**.
+
+**Scope (v1 boundary):** only registrations with an explicit `TService` generic argument are checked. Non-generic self-registration (`[SingletonService]` with no `<T>`) has nothing to look up a lock by, and is out of scope.
 
 ## Generation Rules
 
@@ -76,6 +105,7 @@ Namespace `DIGen.Generated` (infrastructure):
   `Add{SanitizedAssemblyName}Services(this IServiceCollection services)`.
   * `MyCompany.Infrastructure` → `AddMyCompanyInfrastructureServices`. Sanitization: split on non-alphanumeric, PascalCase-join, prefix `_` if leading digit.
 * `[XxxService]` → `services.AddXxx<Impl>()`; `[XxxService<TService>]` → `services.AddXxx<TService, Impl>()`; key → `AddKeyedXxx(..., "key")`.
+* `[Service<TService>]` → same as `[XxxService<TService>]`, but `Xxx` is resolved from `TService`'s locked scope instead of being spelled out — see [Required Scope Validation](#required-scope-validation).
 * Classes implementing `Microsoft.Extensions.Hosting.IHostedService` → `services.AddHostedService<Impl>()`.
 * Registrations sorted by implementation FQN → deterministic output.
 * Abstract classes are skipped with a warning; a class may carry exactly one lifetime attribute.
@@ -104,6 +134,9 @@ Namespace `DIGen.Generated` (infrastructure):
 | DIGEN005 | Warning | Lifetime attribute on an abstract class — registration skipped |
 | DIGEN006 | Error | Multiple lifetime attributes on one class |
 | DIGEN007 | Error | `[Inject]` inside a non-class type (struct/interface) |
+| DIGEN008 | Error | `[Service<T>]` used but `T` has no locked scope (no `[RequiredScope]`, no reachable `[assembly: RequiredExternalScope]`) |
+| DIGEN009 | Error | `[XxxService<T>]`'s lifetime disagrees with `T`'s locked scope |
+| DIGEN010 | Error | Two reachable `[assembly: RequiredExternalScope]` declarations lock the same type to different lifetimes |
 
 Category `NkChinh.DI.Generator`, `helpLinkUri` → docs/diagnostics.md anchors.
 
@@ -137,7 +170,10 @@ Category `NkChinh.DI.Generator`, `helpLinkUri` → docs/diagnostics.md anchors.
 3. Sample multi-project solution builds and, at runtime, resolves services registered across three projects through the generated aggregator.
 4. Every diagnostic in the table above has at least one test proving it fires (and one proving it doesn't misfire).
 5. All project-specific naming from the legacy file is gone; naming derives from `AssemblyName` or is a documented fixed contract.
+6. `[Service<T>]` correctly resolves its lifetime across project boundaries (interface locked in one project, registration in another, external-scope lock in a third) — proven by an integration test, not just a unit test.
 
 ## Open Questions
 
-None blocking — assumptions A1–A6 stand unless the user overrides them.
+None blocking — assumptions A1–A10 stand unless the user overrides them. A7–A10 (Required Scope
+Validation design) are freshly drafted and awaiting explicit confirmation before implementation
+starts (see PR/commit that introduces this section).

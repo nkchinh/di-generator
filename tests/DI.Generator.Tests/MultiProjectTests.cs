@@ -120,4 +120,70 @@ public class MultiProjectTests
         var source = outcome.GetSource(Hint);
         Assert.DoesNotContain("AllServices", source);
     }
+
+    [Fact]
+    public void ServiceAttribute_ResolvesRequiredScope_LockedInAReferencedProject()
+    {
+        var domainRef = BuildLibraryReference("""
+            using DIGen;
+
+            namespace Domain;
+
+            [RequiredScope(DiServiceScope.Scoped)]
+            public interface IOrderRepository { }
+            """,
+            assemblyName: "MyCompany.Domain");
+
+        var infrastructure = GeneratorTestHelper.Run("""
+            using Domain;
+            using DIGen;
+
+            namespace Infrastructure;
+
+            [Service<IOrderRepository>]
+            public class SqlOrderRepository : IOrderRepository { }
+            """,
+            assemblyName: "MyCompany.Infrastructure",
+            extraReferences: [domainRef]);
+
+        Assert.Empty(infrastructure.GeneratorDiagnostics);
+        Assert.Contains(
+            "services.AddScoped<global::Domain.IOrderRepository, global::Infrastructure.SqlOrderRepository>();",
+            infrastructure.GetSource(Hint));
+        Assert.Empty(infrastructure.CompilationErrors);
+    }
+
+    [Fact]
+    public void RequiredExternalScope_DeclaredInOneProject_IsReachableFromAnotherReferencingIt()
+    {
+        var infrastructureRef = BuildLibraryReference("""
+            using System;
+            using DIGen;
+
+            [assembly: RequiredExternalScope(typeof(ThirdParty.IConnection), DiServiceScope.Singleton)]
+
+            namespace ThirdParty;
+
+            public interface IConnection { }
+            """,
+            assemblyName: "MyCompany.Infrastructure");
+
+        var host = GeneratorTestHelper.Run("""
+            using ThirdParty;
+            using DIGen;
+
+            namespace HostApp;
+
+            [Service<IConnection>]
+            public class RedisConnection : IConnection { }
+            """,
+            assemblyName: "MyCompany.Host",
+            extraReferences: [infrastructureRef]);
+
+        Assert.Empty(host.GeneratorDiagnostics);
+        Assert.Contains(
+            "services.AddSingleton<global::ThirdParty.IConnection, global::HostApp.RedisConnection>();",
+            host.GetSource(Hint));
+        Assert.Empty(host.CompilationErrors);
+    }
 }

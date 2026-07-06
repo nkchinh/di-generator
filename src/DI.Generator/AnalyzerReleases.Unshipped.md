@@ -12,3 +12,6 @@ DIGEN004 | NkChinh.DI.Generator | Error | [Inject] property not assignable from 
 DIGEN005 | NkChinh.DI.Generator | Warning | Lifetime attribute on abstract class is ignored
 DIGEN006 | NkChinh.DI.Generator | Error | Multiple lifetime attributes on one class
 DIGEN007 | NkChinh.DI.Generator | Error | [Inject] only supported inside classes
+DIGEN008 | NkChinh.DI.Generator | Error | [Service<T>] used but T has no locked required scope
+DIGEN009 | NkChinh.DI.Generator | Error | Lifetime attribute disagrees with T's locked required scope
+DIGEN010 | NkChinh.DI.Generator | Error | Conflicting [assembly: RequiredExternalScope] declarations for the same type

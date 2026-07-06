@@ -3,7 +3,9 @@ using Sample.Domain;
 
 namespace Sample.Infrastructure;
 
-[ScopedService<IOrderRepository>]
+// Lifetime resolved automatically from IOrderRepository's [RequiredScope] in Sample.Domain —
+// Sample.Infrastructure never has to spell out (or accidentally get wrong) the lifetime.
+[Service<IOrderRepository>]
 public class InMemoryOrderRepository : IOrderRepository
 {
     public IReadOnlyList<string> GetOrders() => ["order-1", "order-2"];

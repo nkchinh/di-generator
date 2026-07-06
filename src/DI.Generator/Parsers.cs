@@ -16,7 +16,14 @@ internal static class Parsers
 
     // ---------------------------------------------------------------- services
 
-    public static ServiceResult? GetServiceResult(GeneratorAttributeSyntaxContext context, string lifetime)
+    /// <summary>
+    /// Parses a class annotated with a lifetime attribute.
+    /// </summary>
+    /// <param name="lifetime">
+    /// The fixed lifetime name for an explicit attribute (Singleton/Scoped/Transient), or null for
+    /// <c>[Service&lt;T&gt;]</c>, whose lifetime is resolved later from T's locked scope.
+    /// </param>
+    public static ServiceResult? GetServiceResult(GeneratorAttributeSyntaxContext context, string? lifetime)
     {
         if (context.TargetSymbol is not INamedTypeSymbol symbol)
         {
@@ -66,9 +73,35 @@ internal static class Parsers
                 lifetime,
                 key,
                 isHosted,
-                location),
+                location,
+                IsAutoScope: lifetime is null,
+                LockedLifetime: serviceType is not null ? GetRequiredScopeLifetime(serviceType) : null),
             null);
     }
+
+    private static string? GetRequiredScopeLifetime(INamedTypeSymbol serviceType)
+    {
+        foreach (var attribute in serviceType.GetAttributes())
+        {
+            if (attribute.AttributeClass is { Name: "RequiredScopeAttribute" } attributeClass &&
+                attributeClass.ContainingNamespace.ToDisplayString() == "DIGen" &&
+                attribute.ConstructorArguments.Length == 1 &&
+                attribute.ConstructorArguments[0].Value is int lifetimeValue)
+            {
+                return LifetimeName(lifetimeValue);
+            }
+        }
+
+        return null;
+    }
+
+    private static string? LifetimeName(int DiServiceScopeValue) => DiServiceScopeValue switch
+    {
+        0 => "Singleton",
+        1 => "Scoped",
+        2 => "Transient",
+        _ => null,
+    };
 
     private static bool IsAssignableTo(INamedTypeSymbol symbol, INamedTypeSymbol serviceType)
     {
@@ -269,4 +302,72 @@ internal static class Parsers
                 .ThenBy(static m => m.ExtensionsTypeName, StringComparer.Ordinal)
                 .ToArray());
     }
+
+    // ---------------------------------------------------------------- external scope rules
+
+    /// <summary>
+    /// Scans this assembly and every referenced assembly for [assembly: RequiredExternalScope] declarations.
+    /// Two declarations locking the same type to different lifetimes are reported as DIGEN010.
+    /// </summary>
+    public static ExternalScopeRules GetExternalScopeRules(Compilation compilation)
+    {
+        var byType = new Dictionary<string, string>(StringComparer.Ordinal);
+        var conflicts = new List<DiagnosticInfo>();
+        var conflictedTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        void Scan(IAssemblySymbol assembly)
+        {
+            foreach (var attribute in assembly.GetAttributes())
+            {
+                if (attribute.AttributeClass is not { Name: "RequiredExternalScopeAttribute" } attributeClass ||
+                    attributeClass.ContainingNamespace.ToDisplayString() != "DIGen" ||
+                    attribute.ConstructorArguments.Length != 2 ||
+                    attribute.ConstructorArguments[0].Value is not ITypeSymbol typeArgument ||
+                    attribute.ConstructorArguments[1].Value is not int lifetimeValue)
+                {
+                    continue;
+                }
+
+                var lifetimeName = LifetimeName(lifetimeValue);
+                if (lifetimeName is null)
+                {
+                    continue;
+                }
+
+                var typeFqn = typeArgument.ToDisplayString(FullyQualified);
+                if (byType.TryGetValue(typeFqn, out var existingLifetime))
+                {
+                    if (existingLifetime != lifetimeName && conflictedTypes.Add(typeFqn))
+                    {
+                        conflicts.Add(DiagnosticInfo.Create(
+                            DiagnosticDescriptors.ConflictingRequiredExternalScope,
+                            null,
+                            TrimGlobalPrefix(typeFqn)));
+                    }
+                }
+                else
+                {
+                    byType[typeFqn] = lifetimeName;
+                }
+            }
+        }
+
+        Scan(compilation.Assembly);
+        foreach (var referenced in compilation.SourceModule.ReferencedAssemblySymbols)
+        {
+            Scan(referenced);
+        }
+
+        var rules = byType
+            .Select(static kv => new ExternalScopeRule(kv.Key, kv.Value))
+            .OrderBy(static r => r.TypeFqn, StringComparer.Ordinal)
+            .ToArray();
+
+        return new ExternalScopeRules(
+            new EquatableArray<ExternalScopeRule>(rules),
+            new EquatableArray<DiagnosticInfo>(conflicts.ToArray()));
+    }
+
+    private static string TrimGlobalPrefix(string fqn)
+        => fqn.StartsWith("global::", StringComparison.Ordinal) ? fqn.Substring("global::".Length) : fqn;
 }

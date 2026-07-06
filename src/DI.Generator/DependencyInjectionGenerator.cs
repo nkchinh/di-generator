@@ -38,9 +38,29 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .Select(static (compilation, _) => Parsers.GetReferencedModules(compilation))
             .WithTrackingName("Modules");
 
+        var externalScopeRules = context.CompilationProvider
+            .Select(static (compilation, _) => Parsers.GetExternalScopeRules(compilation))
+            .WithTrackingName("ExternalScopeRules");
+
         context.RegisterSourceOutput(
-            services.Combine(assemblyName).Combine(referencedModules),
-            static (spc, input) => Emitters.EmitRegistrations(spc, input.Left.Left, input.Left.Right, input.Right));
+            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules),
+            static (spc, input) => Emitters.EmitRegistrations(
+                spc, input.Left.Left.Left, input.Left.Left.Right, input.Left.Right, input.Right));
+
+        var hasServiceLifetime = context.CompilationProvider
+            .Select(static (compilation, _) =>
+                compilation.GetTypeByMetadataName("Microsoft.Extensions.DependencyInjection.ServiceLifetime") is not null)
+            .WithTrackingName("HasServiceLifetime");
+
+        context.RegisterSourceOutput(hasServiceLifetime, static (spc, hasServiceLifetime) =>
+        {
+            if (hasServiceLifetime)
+            {
+                spc.AddSource(
+                    EmbeddedSources.LifetimeExtensionsHintName,
+                    SourceText.From(EmbeddedSources.LifetimeExtensions, Encoding.UTF8));
+            }
+        });
 
         var injects = context.SyntaxProvider
             .ForAttributeWithMetadataName(
@@ -65,6 +85,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
         var scopedTyped = ForLifetime(context, "DIGen.ScopedServiceAttribute`1", "Scoped");
         var transientSelf = ForLifetime(context, "DIGen.TransientServiceAttribute", "Transient");
         var transientTyped = ForLifetime(context, "DIGen.TransientServiceAttribute`1", "Transient");
+        var autoScoped = ForLifetime(context, "DIGen.ServiceAttribute`1", lifetime: null);
 
         return singletonSelf.Collect()
             .Combine(singletonTyped.Collect())
@@ -72,19 +93,21 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .Combine(scopedTyped.Collect())
             .Combine(transientSelf.Collect())
             .Combine(transientTyped.Collect())
+            .Combine(autoScoped.Collect())
             .Select(static (input, _) =>
             {
-                var (((((singletonSelf, singletonTyped), scopedSelf), scopedTyped), transientSelf), transientTyped) = input;
+                var ((((((singletonSelf, singletonTyped), scopedSelf), scopedTyped), transientSelf), transientTyped), autoScoped) = input;
                 var results = new List<ServiceResult>(
                     singletonSelf.Length + singletonTyped.Length +
                     scopedSelf.Length + scopedTyped.Length +
-                    transientSelf.Length + transientTyped.Length);
+                    transientSelf.Length + transientTyped.Length + autoScoped.Length);
                 results.AddRange(singletonSelf);
                 results.AddRange(singletonTyped);
                 results.AddRange(scopedSelf);
                 results.AddRange(scopedTyped);
                 results.AddRange(transientSelf);
                 results.AddRange(transientTyped);
+                results.AddRange(autoScoped);
                 return new EquatableArray<ServiceResult>(results.ToArray());
             });
     }
@@ -92,7 +115,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
     private static IncrementalValuesProvider<ServiceResult> ForLifetime(
         IncrementalGeneratorInitializationContext context,
         string attributeMetadataName,
-        string lifetime)
+        string? lifetime)
         => context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 attributeMetadataName,

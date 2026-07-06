@@ -248,4 +248,71 @@ public class EndToEndTests
         var useCase = scope.ServiceProvider.GetRequiredService(useCaseType);
         Assert.Equal("handled by library", useCaseType.GetMethod("Execute")!.Invoke(useCase, null));
     }
+
+    [Fact]
+    public void ServiceAttribute_ResolvesLifetimeAcrossProjects_AndRegistersWithIt()
+    {
+        var domainImage = RuntimeHelper.CompileWithGenerator("""
+            using DIGen;
+
+            namespace Domain;
+
+            [RequiredScope(DiServiceScope.Scoped)]
+            public interface IOrderRepository { }
+            """,
+            assemblyName: "ScopeDomain");
+
+        var infrastructureImage = RuntimeHelper.CompileWithGenerator("""
+            using System;
+            using Domain;
+            using DIGen;
+
+            [assembly: RequiredExternalScope(typeof(ThirdParty.IConnection), DiServiceScope.Singleton)]
+
+            namespace Infra
+            {
+                [Service<IOrderRepository>]
+                public class SqlOrderRepository : IOrderRepository { }
+            }
+
+            namespace ThirdParty
+            {
+                public interface IConnection { }
+            }
+
+            namespace Infra2
+            {
+                [DIGen.Service<ThirdParty.IConnection>]
+                public class RedisConnection : ThirdParty.IConnection { }
+            }
+            """,
+            assemblyName: "ScopeInfrastructure",
+            referencedImages: domainImage);
+
+        var assembly = RuntimeHelper.Load(infrastructureImage, ("ScopeDomain", domainImage));
+        using var provider = BuildProvider(
+            assembly,
+            "Microsoft.Extensions.DependencyInjection.ScopeInfrastructureServiceCollectionExtensions",
+            "AddScopeInfrastructureServices");
+
+        // IOrderRepository lives in the Domain assembly; resolve it through the impl type's
+        // interfaces so it shares type identity with whatever the generated code registered.
+        var repositoryType = assembly.GetType("Infra.SqlOrderRepository")!
+            .GetInterfaces().Single(static t => t.Name == "IOrderRepository");
+        using (var scopeA = provider.CreateScope())
+        {
+            var first = scopeA.ServiceProvider.GetRequiredService(repositoryType);
+            var second = scopeA.ServiceProvider.GetRequiredService(repositoryType);
+            Assert.Same(first, second); // same scope → same instance (Scoped)
+
+            using var scopeB = provider.CreateScope();
+            var third = scopeB.ServiceProvider.GetRequiredService(repositoryType);
+            Assert.NotSame(first, third); // different scope → different instance (Scoped, not Singleton)
+        }
+
+        var connectionType = assembly.GetType("ThirdParty.IConnection")!;
+        Assert.Same( // Singleton, per the RequiredExternalScope lock
+            provider.GetRequiredService(connectionType),
+            provider.GetRequiredService(connectionType));
+    }
 }

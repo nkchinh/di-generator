@@ -93,13 +93,23 @@ internal sealed record DiagnosticInfo(
 }
 
 /// <summary>One service registration extracted from a lifetime attribute.</summary>
+/// <param name="Lifetime">
+/// Null when <paramref name="IsAutoScope"/> is true and not yet resolved against locked-scope rules.
+/// </param>
+/// <param name="IsAutoScope">True for <c>[Service&lt;T&gt;]</c>, whose lifetime is resolved from T's locked scope.</param>
+/// <param name="LockedLifetime">
+/// The lifetime <c>ServiceFqn</c> is locked to via its own <c>[RequiredScope]</c>, if any. Resolved eagerly
+/// because it only depends on the service type's symbol, not on the whole compilation.
+/// </param>
 internal sealed record ServiceInfo(
     string ImplementationFqn,
     string? ServiceFqn,
-    string Lifetime,
+    string? Lifetime,
     string? Key,
     bool IsHostedService,
-    LocationInfo? Location);
+    LocationInfo? Location,
+    bool IsAutoScope,
+    string? LockedLifetime);
 
 /// <summary>Transform result for the service pipeline: either a registration or a diagnostic.</summary>
 internal sealed record ServiceResult(ServiceInfo? Service, DiagnosticInfo? Diagnostic);
@@ -133,3 +143,11 @@ internal sealed record InjectResult(
 
 /// <summary>A referenced assembly's generated registration module, read from its assembly-level marker.</summary>
 internal readonly record struct ModuleInfo(string MethodName, string ExtensionsTypeName);
+
+/// <summary>A locked lifetime for a type, read from an <c>[assembly: RequiredExternalScope]</c> declaration.</summary>
+internal readonly record struct ExternalScopeRule(string TypeFqn, string Lifetime);
+
+/// <summary>External-scope rules resolved for the current compilation, plus any conflicts found while merging them.</summary>
+internal sealed record ExternalScopeRules(
+    EquatableArray<ExternalScopeRule> Rules,
+    EquatableArray<DiagnosticInfo> Diagnostics);

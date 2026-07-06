@@ -72,4 +72,38 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpBase + "#digen007");
+
+    public static readonly DiagnosticDescriptor ServiceAttributeRequiresLockedScope = new(
+        id: "DIGEN008",
+        title: "[Service<T>] requires a locked scope",
+        messageFormat:
+            "Class '{0}' uses [Service<{1}>] but '{1}' has no locked scope; add [RequiredScope] to '{1}' " +
+            "(or an [assembly: RequiredExternalScope] declaration for it), or use an explicit " +
+            "[SingletonService<T>]/[ScopedService<T>]/[TransientService<T>] instead",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "[Service<T>] resolves its lifetime from T's locked scope; there is nothing to resolve it from.",
+        helpLinkUri: HelpBase + "#digen008");
+
+    public static readonly DiagnosticDescriptor LifetimeDisagreesWithLockedScope = new(
+        id: "DIGEN009",
+        title: "Lifetime attribute disagrees with the locked scope",
+        messageFormat: "Class '{0}' is registered with lifetime '{2}' but '{1}' is locked to '{3}'",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "A [RequiredScope] or [assembly: RequiredExternalScope] lock on the service type must match the registration's lifetime.",
+        helpLinkUri: HelpBase + "#digen009");
+
+    public static readonly DiagnosticDescriptor ConflictingRequiredExternalScope = new(
+        id: "DIGEN010",
+        title: "Conflicting RequiredExternalScope declarations",
+        messageFormat:
+            "Type '{0}' is locked to different lifetimes by more than one [assembly: RequiredExternalScope] " +
+            "declaration reachable from this project",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpBase + "#digen010");
 }

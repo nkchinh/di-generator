@@ -16,11 +16,16 @@ internal static class Emitters
         SourceProductionContext context,
         EquatableArray<ServiceResult> results,
         string assemblyName,
-        EquatableArray<ModuleInfo> modules)
+        EquatableArray<ModuleInfo> modules,
+        ExternalScopeRules externalScopeRules)
     {
         ReportDiagnostics(context, results.Select(static r => r.Diagnostic));
+        ReportDiagnostics(context, externalScopeRules.Diagnostics.Select(static d => (DiagnosticInfo?)d));
 
-        var services = ResolveValidServices(context, results);
+        var externalScopeByType = externalScopeRules.Rules.ToDictionary(
+            static r => r.TypeFqn, static r => r.Lifetime, StringComparer.Ordinal);
+
+        var services = ResolveValidServices(context, results, externalScopeByType);
         var hasOwnServices = services.Count > 0;
         var hasModules = modules.Count > 0;
         if (!hasOwnServices && !hasModules)
@@ -104,13 +109,15 @@ internal static class Emitters
 
     private static List<ServiceInfo> ResolveValidServices(
         SourceProductionContext context,
-        EquatableArray<ServiceResult> results)
+        EquatableArray<ServiceResult> results,
+        IReadOnlyDictionary<string, string> externalScopeByType)
     {
         var valid = new List<ServiceInfo>();
-        var groups = results
-            .Where(static r => r.Service is not null)
-            .Select(static r => r.Service!)
-            .GroupBy(static s => s.ImplementationFqn, StringComparer.Ordinal);
+        var scopeResolved = ResolveLockedScopes(
+            context,
+            results.Where(static r => r.Service is not null).Select(static r => r.Service!),
+            externalScopeByType);
+        var groups = scopeResolved.GroupBy(static s => s.ImplementationFqn, StringComparer.Ordinal);
 
         foreach (var group in groups)
         {
@@ -142,6 +149,65 @@ internal static class Emitters
             return byService != 0 ? byService : string.CompareOrdinal(a.Key, b.Key);
         });
         return valid;
+    }
+
+    /// <summary>
+    /// Applies the RequiredScope/RequiredExternalScope lock (if any) to every service that names a
+    /// ServiceFqn: finalizes [Service&lt;T&gt;]'s lifetime (DIGEN008 if unresolvable), and checks explicit
+    /// lifetime attributes against the lock (DIGEN009). Services that fail are dropped, not emitted.
+    /// </summary>
+    private static List<ServiceInfo> ResolveLockedScopes(
+        SourceProductionContext context,
+        IEnumerable<ServiceInfo> services,
+        IReadOnlyDictionary<string, string> externalScopeByType)
+    {
+        var resolved = new List<ServiceInfo>();
+        foreach (var service in services)
+        {
+            if (service.ServiceFqn is null)
+            {
+                // Self-registration has no TService to look up a lock by; out of scope for v1.
+                resolved.Add(service);
+                continue;
+            }
+
+            var locked = service.LockedLifetime ??
+                (externalScopeByType.TryGetValue(service.ServiceFqn, out var external) ? external : null);
+
+            if (service.IsAutoScope)
+            {
+                if (locked is null)
+                {
+                    context.ReportDiagnostic(
+                        DiagnosticInfo.Create(
+                            DiagnosticDescriptors.ServiceAttributeRequiresLockedScope,
+                            service.Location,
+                            TrimGlobalPrefix(service.ImplementationFqn),
+                            TrimGlobalPrefix(service.ServiceFqn)).ToDiagnostic());
+                    continue;
+                }
+
+                resolved.Add(service with { Lifetime = locked });
+                continue;
+            }
+
+            if (locked is not null && locked != service.Lifetime)
+            {
+                context.ReportDiagnostic(
+                    DiagnosticInfo.Create(
+                        DiagnosticDescriptors.LifetimeDisagreesWithLockedScope,
+                        service.Location,
+                        TrimGlobalPrefix(service.ImplementationFqn),
+                        TrimGlobalPrefix(service.ServiceFqn),
+                        service.Lifetime!,
+                        locked).ToDiagnostic());
+                continue;
+            }
+
+            resolved.Add(service);
+        }
+
+        return resolved;
     }
 
     private static string FormatRegistration(ServiceInfo service)
