@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Sample.Domain/Sample.Domain.csproj" />
+    <Project Path="samples/Sample.Host/Sample.Host.csproj" />
+    <Project Path="samples/Sample.Infrastructure/Sample.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/DI.Generator/DI.Generator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DI.Generator.IntegrationTests/DI.Generator.IntegrationTests.csproj" />
+    <Project Path="tests/DI.Generator.Tests/DI.Generator.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Source generators must target netstandard2.0 (they load into the compiler process).
+         Roslyn 4.8.0 = .NET 8 SDK baseline, so both net8.0 and net10.0 SDKs can load this generator. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <AssemblyName>NkChinh.DI.Generator</AssemblyName>
+    <RootNamespace>NkChinh.DI.Generator</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Packaging">
+    <PackageId>NkChinh.DI.Generator</PackageId>
+    <Version>0.0.0</Version>
+    <Authors>NkChinh</Authors>
+    <Description>Pure Roslyn source generator for Microsoft.Extensions.DependencyInjection: attribute-driven service registration ([SingletonService], [ScopedService&lt;T&gt;], ...), [Inject] constructor generation, and multi-project registration chaining. No runtime dependencies — everything is generated into your project at compile time.</Description>
+    <PackageTags>dependency-injection;di;source-generator;roslyn;codegen;servicecollection</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/nkchinh/di-generator</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nkchinh/di-generator</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReleaseNotes>See CHANGELOG.md</PackageReleaseNotes>
+
+    <!-- Pure generator package: no lib/, no runtime dependency graph. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DI.Generator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Analyzer packaging layout: analyzers/dotnet/cs/NkChinh.DI.Generator.dll -->
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # Samples consume the package from the local 'artifacts' feed, so pack first.
+      - name: Pack
+        run: dotnet pack src/DI.Generator -c Release -o artifacts
+
+      - name: Build
+        run: dotnet build DI.Generator.slnx -c Release
+
+      - name: Test (unit + snapshot + integration, net8.0 & net10.0)
+        run: dotnet test DI.Generator.slnx -c Release --no-build
+
+      - name: Run multi-project sample
+        run: dotnet run --project samples/Sample.Host -c Release --no-build
+
+      - name: Verify package is analyzer-only
+        shell: bash
+        run: |
+          entries=$(unzip -l artifacts/NkChinh.DI.Generator.*.nupkg | awk '{print $4}')
+          echo "$entries"
+          echo "$entries" | grep -q '^analyzers/dotnet/cs/NkChinh.DI.Generator.dll$' || { echo '::error::analyzer dll missing'; exit 1; }
+          if echo "$entries" | grep -q '^lib/'; then echo '::error::package must not contain lib/'; exit 1; fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*.nupkg

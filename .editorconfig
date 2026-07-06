@@ -1,0 +1,29 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{csproj,props,targets,xml,json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_sort_system_directives_first = true
+
+# Verify snapshot files are generated — never touch
+[*.{received,verified}.{cs,txt}]
+charset = utf-8-bom
+end_of_line = lf
+insert_final_newline = false
+trim_trailing_whitespace = false
