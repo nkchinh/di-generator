@@ -157,7 +157,7 @@ public class MultiProjectTests
         Assert.Empty(infrastructure.GeneratorDiagnostics);
         Assert.Contains(
             "registrations.Add((typeof(global::Domain.IOrderRepository), typeof(global::Infrastructure.SqlOrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             infrastructure.GetSource(Hint));
         Assert.Empty(infrastructure.CompilationErrors);
     }
@@ -192,7 +192,7 @@ public class MultiProjectTests
         Assert.Empty(host.GeneratorDiagnostics);
         Assert.Contains(
             "registrations.Add((typeof(global::ThirdParty.IConnection), typeof(global::HostApp.RedisConnection), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false, null));",
             host.GetSource(Hint));
         Assert.Empty(host.CompilationErrors);
     }

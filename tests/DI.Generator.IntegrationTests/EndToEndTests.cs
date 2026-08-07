@@ -192,12 +192,65 @@ public class EndToEndTests
         var consumerType = assembly.GetType("Demo.Consumer")!;
         var generatedCtor = consumerType.GetConstructors()
             .Single(static c => c.GetParameters().Length == 1);
-        Assert.Contains(generatedCtor.GetCustomAttributes(), static a =>
-            a.GetType().Name == nameof(ActivatorUtilitiesConstructorAttribute));
 
-        // [ActivatorUtilitiesConstructor] must win over the parameterless constructor.
+        // The generator no longer emits [ActivatorUtilitiesConstructor] (it was MEDI-dependent and
+        // would have forced every [Inject] project to reference MEDI.Abstractions). Instead,
+        // when a class with [Inject] + user constructors is also registered as a service, the
+        // generator emits a factory delegate (see FactoryDelegate_PicksGeneratedConstructor).
+        // For a class that is NOT registered as a service (e.g. Consumer here), the user must
+        // either (a) resolve through a factory call directly, or (b) add a lifetime attribute to
+        // have the generator emit a factory. ActivatorUtilities.CreateInstance picks the longest
+        // resolvable constructor by default, which here is the generated one (1 parameter). Verify
+        // the runtime outcome instead of the absent attribute.
         var consumer = ActivatorUtilities.CreateInstance(provider, consumerType);
         Assert.Equal("injected", consumerType.GetMethod("Describe")!.Invoke(consumer, null));
+    }
+
+    [Fact]
+    public void FactoryDelegate_PicksGeneratedConstructor_WhenServiceRegisteredWithUserCtor()
+    {
+        // When a class has both an [Inject] generated constructor AND a user-defined constructor,
+        // and is also registered as a service via a lifetime attribute, the generator emits a
+        // factory delegate that resolves dependencies through IServiceProvider.GetService (BCL-only)
+        // — no [ActivatorUtilitiesConstructor] attribute, no reflection.
+        var image = RuntimeHelper.CompileWithGenerator("""
+            using DIGen;
+
+            namespace Demo;
+
+            public interface IGreeter { string Greet(); }
+
+            [SingletonService<IGreeter>]
+            public class Greeter : IGreeter
+            {
+                public string Greet() => "from factory delegate";
+            }
+
+            public interface IConsumer { string Describe(); }
+
+            [SingletonService<IConsumer>]
+            public partial class Consumer : IConsumer
+            {
+                [Inject] private readonly IGreeter _greeter;
+
+                // User-defined parameterless constructor — the generator must emit a factory
+                // delegate rather than relying on MEDI's ActivatorUtilities constructor discovery.
+                public Consumer() { _greeter = null!; }
+
+                public string Describe() => _greeter is null ? "default ctor" : _greeter.Greet();
+            }
+            """,
+            assemblyName: "FactoryApp");
+
+        var assembly = RuntimeHelper.Load(image);
+        using var provider = BuildProvider(
+            assembly,
+            "Microsoft.Extensions.DependencyInjection.FactoryAppServiceCollectionExtensions",
+            "AddFactoryAppServices");
+
+        var consumerType = assembly.GetType("Demo.IConsumer")!;
+        var consumer = provider.GetRequiredService(consumerType);
+        Assert.Equal("from factory delegate", consumerType.GetMethod("Describe")!.Invoke(consumer, null));
     }
 
     [Fact]

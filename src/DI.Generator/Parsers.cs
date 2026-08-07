@@ -194,15 +194,35 @@ internal static class Parsers
                 return null;
         }
 
+        // Read key from [Inject("key")] if present
+        var key = context.Attributes.Length > 0 &&
+            context.Attributes[0].ConstructorArguments.Length > 0 &&
+            context.Attributes[0].ConstructorArguments[0].Value is string keyValue
+            ? keyValue
+            : null;
+
+        // Optional when nullable type annotation or field has default value (= null etc.)
+        var isOptional = memberType.NullableAnnotation == NullableAnnotation.Annotated;
+        if (!isOptional && context.TargetNode is VariableDeclaratorSyntax varDecl &&
+            varDecl.Initializer is not null)
+        {
+            isOptional = true;
+        }
+
         var member = new InjectMemberInfo(
             symbol.Name,
             memberType.ToDisplayString(FullyQualified),
             (memberType as INamedTypeSymbol)?.Name ?? string.Empty,
             isProperty,
+            key,
+            isOptional,
             context.TargetNode.SyntaxTree.FilePath,
-            context.TargetNode.SpanStart);
+            context.TargetNode.SpanStart,
+            LocationInfo.CreateFrom(context.TargetNode));
 
-        var shell = BuildShell(containingType, typeDeclarations, groupKey);
+        var hasUserCtor = containingType.Constructors.Any(
+            static c => !c.IsStatic && !c.IsImplicitlyDeclared);
+        var shell = BuildShell(containingType, typeDeclarations, groupKey, hasUserCtor);
         return new InjectResult(shell, member, groupKey, null);
     }
 
@@ -234,7 +254,8 @@ internal static class Parsers
     private static InjectClassShell BuildShell(
         INamedTypeSymbol containingType,
         TypeDeclarationSyntax[] typeDeclarationsInnermostFirst,
-        string groupKey)
+        string groupKey,
+        bool hasUserConstructor = false)
     {
         var chain = new TypeShell[typeDeclarationsInnermostFirst.Length];
         var hintParts = new string[typeDeclarationsInnermostFirst.Length];
@@ -263,6 +284,7 @@ internal static class Parsers
             ns,
             containingType.Name,
             new EquatableArray<TypeShell>(chain),
+            hasUserConstructor,
             hintName);
     }
 

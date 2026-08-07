@@ -38,7 +38,7 @@ public class ServiceRegistrationTests
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Demo.MemoryCache), typeof(global::Demo.MemoryCache), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false, null));",
             source);
         Assert.Contains("public static class TestAssemblyServiceCollectionExtensions", source);
         Assert.Contains("CollectTestAssemblyServices(", source);
@@ -64,7 +64,7 @@ public class ServiceRegistrationTests
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -87,7 +87,7 @@ public class ServiceRegistrationTests
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Demo.NotificationChannel), typeof(global::Demo.EmailChannel), " +
-            "(int)global::DIGen.DiServiceScope.Transient, null, false));",
+            "(int)global::DIGen.DiServiceScope.Transient, null, false, null));",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -113,12 +113,12 @@ public class ServiceRegistrationTests
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false));",
+            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false, null));",
             source);
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), " +
-            "(int)global::DIGen.DiServiceScope.Transient, \"mem\", false));",
+            "(int)global::DIGen.DiServiceScope.Transient, \"mem\", false, null));",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -145,7 +145,7 @@ public class ServiceRegistrationTests
         Assert.Contains(
             "registrations.Add((" +
             "typeof(global::Microsoft.Extensions.Hosting.IHostedService), typeof(global::Demo.Worker), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, true));",
+            "(int)global::DIGen.DiServiceScope.Singleton, null, true, null));",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }

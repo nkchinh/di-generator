@@ -32,7 +32,7 @@ method in `Program.cs` — with no runtime assembly added to their dependency gr
 | A8 | `RequiredScope`/`RequiredExternalScope` validation only covers registrations with an explicit `TService` (`[XxxService<T>]`, `[Service<T>]`) | Non-generic self-registration has no `TService` to look up a lock by. |
 | A9 | `DiServiceScope`/`RequiredScopeAttribute`/`RequiredExternalScopeAttribute`/`ServiceAttribute<T>` are always embedded (no MEDI dependency); `DiServiceScopeExtensions.ToServiceLifetime()` is embedded **only** when the compilation can resolve `Microsoft.Extensions.DependencyInjection.ServiceLifetime` | Reconciles "must work in MEDI-free Domain/Application projects" with "must expose a mapping to MEDI's `ServiceLifetime`" — the mapping is only meaningful (and only compiles) where MEDI is already referenced, which the Host always does. |
 | A10 | Conflicting `[assembly: RequiredExternalScope]` locks for the same type (different lifetimes, both reachable from the current compilation) are a compile **error** (DIGEN010), not a silent last-wins | Matches the feature's purpose — surface misconfiguration instead of guessing. |
-| A11 | Registration is split into **Collect** (always emitted, no MEDI needed) and **Materialize** (MEDI only): `Collect{X}Services` builds a list of registrations as a `(Type, Type, int, string?, bool)` tuple — framework types only, never a project-embedded class/enum — so it's callable across project references; `Add{X}Services`/`Add{X}AllServices` (MEDI only) call it and materialize into a real `IServiceCollection` | This is what actually makes A9 true for a project that *also* self-registers via `[Service<T>]`/`[XxxService<T>]` (not just one that carries markers only). A project-embedded type used as a cross-assembly method parameter would have different identity per assembly and fail to compile — the tuple is the fix. |
+| A11 | Registration is split into **Collect** (always emitted, no MEDI needed) and **Materialize** (MEDI only): `Collect{X}Services` builds a list of registrations as a `(Type, Type, int, string?, bool, Func<IServiceProvider, object>?)` tuple — framework types plus a `Func<IServiceProvider, object>?` (all of `System`), never a project-embedded class/enum — so it's callable across project references; `Add{X}Services`/`Add{X}AllServices` (MEDI only) call it and materialize into a real `IServiceCollection` | This is what actually makes A9 true for a project that *also* self-registers via `[Service<T>]`/`[XxxService<T>]` (not just one that carries markers only). A project-embedded type used as a cross-assembly method parameter would have different identity per assembly and fail to compile — the tuple is the fix. The 6th tuple element (`Factory`) carries the factory delegate for classes that have both `[Inject]` members and a user-defined constructor (see [Factory-delegate activation](#factory-delegate-activation)); it is `null` otherwise. Because the delegate references only `System.IServiceProvider` (BCL) and the embedded `InjectServiceResolver`, the tuple stays callable across MEDI-free projects. |
 
 ## Tech Stack
 
@@ -67,7 +67,19 @@ Namespace `DIGen`:
 
 * `SingletonServiceAttribute`, `ScopedServiceAttribute`, `TransientServiceAttribute` — self-registration; optional `string key` ctor arg → keyed service.
 * `SingletonServiceAttribute<TService>`, `ScopedServiceAttribute<TService>`, `TransientServiceAttribute<TService>` — register as `TService`; optional key.
-* `InjectAttribute` — on instance fields/properties of a `partial` class.
+* `InjectAttribute` — on instance fields/properties of a `partial` class. Optional `string key`
+  ctor arg (`[Inject("key")]`) is accepted as a compile-time signal: in a project with no reference
+  to `Microsoft.Extensions.DependencyInjection`, `DIGEN012` is reported and the key is ignored at
+  runtime (the member resolves by type via `IServiceProvider.GetService`). The generator does not
+  (yet) emit keyed lookup for `[Inject]` members. A member annotated as nullable (`T?`) or with a
+  default value (`= null` / `= default`) is treated as **optional** and resolved via
+  `IServiceProvider.GetService` (returns `null` when missing) instead of the default `GetRequired<T>()`
+  (throws when missing).
+* `InjectServiceResolver` — BCL-only helper (`GetRequired<T>` / `GetOptional<T>` over
+  `System.IServiceProvider`) embedded into every consuming project. Used by generated factory
+  delegates (see [Factory-delegate activation](#factory-delegate-activation)) so a class with both
+  `[Inject]` members and a user-defined constructor can be activated from a Domain/Application project
+  that has no MEDI reference — `IServiceProvider` is a BCL type (`System`), not MEDI.
 * `DiServiceScope` — `{ Singleton = 0, Scoped = 1, Transient = 2 }`. See [Required Scope Validation](#required-scope-validation).
 * `RequiredScopeAttribute(DiServiceScope)` — on an interface, locks the lifetime any registration of that interface must use.
 * `RequiredExternalScopeAttribute(Type, DiServiceScope)` — assembly-level; locks the lifetime for a type the current project doesn't own (third-party interface/`DbContext`/etc.).
@@ -104,20 +116,62 @@ Prevents captive-dependency bugs (e.g. a `Scoped` `DbContext` registered as `Sin
 
 Per assembly with at least one service, emit `public static class {SanitizedAssemblyName}ServiceCollectionExtensions` (`MyCompany.Infrastructure` → sanitized to `MyCompanyInfrastructure`; split on non-alphanumeric, PascalCase-join, prefix `_` if leading digit) with up to three members:
 
-* **`Collect{X}Services(ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)`** — always emitted, regardless of whether the project references MEDI. One tuple per service (`Lifetime` is `DiServiceScope`'s underlying `int`; hosted services set `ServiceType` to `typeof(IHostedService)` directly, `IsHostedService = true`, ignoring any `TService`/key). The tuple uses only framework types so it's safe as a cross-project method parameter — a project-embedded type would have different identity per assembly and fail to compile.
+* **`Collect{X}Services(ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, Func<IServiceProvider, object>? Factory)> registrations)`** — always emitted, regardless of whether the project references MEDI. One tuple per service (`Lifetime` is `DiServiceScope`'s underlying `int`; hosted services set `ServiceType` to `typeof(IHostedService)` directly, `IsHostedService = true`, ignoring any `TService`/key; `Factory` is a non-`null` delegate when the class has `[Inject]` members **and** a user constructor — see [Factory-delegate activation](#factory-delegate-activation) — otherwise `null`). The tuple uses only framework types plus a `Func<IServiceProvider, object>?` (all of `System`), so it's safe as a cross-project method parameter — a project-embedded type would have different identity per assembly and fail to compile.
 * **`Add{X}Services(this IServiceCollection services)`** — emitted only when the project resolves MEDI. Builds a list, calls `Collect{X}Services`, materializes it.
 * **`Add{X}AllServices(this IServiceCollection services)`** — the aggregator (see below).
 
 `[Service<TService>]` collects the same way as `[XxxService<TService>]`, with `Lifetime` resolved from `TService`'s locked scope instead of being spelled out by the attribute — see [Required Scope Validation](#required-scope-validation). Registrations are sorted by implementation FQN → deterministic output. Abstract classes are skipped with a warning; a class may carry exactly one lifetime attribute.
 
-Materialization (embedded only when MEDI is resolvable, alongside `DiServiceScopeExtensions`): `IServiceCollection.MaterializeServices(IEnumerable<(...)> registrations)` loops the tuples — hosted services go through `TryAddEnumerable(ServiceDescriptor.Singleton(...))` (matching `AddHostedService<T>()`'s dedup semantics without ever referencing the Hosting package); everything else becomes a keyed or non-keyed `ServiceDescriptor` via the (`Type`, `Type`, `ServiceLifetime`) or (`Type`, key, `Type`, `ServiceLifetime`) constructor.
+Materialization (embedded only when MEDI is resolvable, alongside `DiServiceScopeExtensions`): `IServiceCollection.MaterializeServices(IEnumerable<(...)> registrations)` loops the tuples — hosted services go through `TryAddEnumerable(ServiceDescriptor.Singleton(...))` (matching `AddHostedService<T>()`'s dedup semantics without ever referencing the Hosting package); services with a non-`null` `Factory` become a keyed or non-keyed `ServiceDescriptor(Type, Func<IServiceProvider, object>, ServiceLifetime)` (keyed wrapped as `(sp, key) => factory(sp)`); everything else becomes a keyed or non-keyed `ServiceDescriptor` via the (`Type`, `Type`, `ServiceLifetime`) or (`Type`, key, `Type`, `ServiceLifetime`) constructor.
 
 ### Constructor injection (`[Inject]`)
 
-* All `[Inject]` members of a class are **grouped** → exactly **one** generated constructor in a partial declaration, decorated with `[ActivatorUtilitiesConstructor]`.
+* All `[Inject]` members of a class are **grouped** → exactly **one** generated constructor in a partial declaration. The constructor is **no longer decorated with `[ActivatorUtilitiesConstructor]`** — instead, when a class also has a user-defined constructor, the generator emits a **factory delegate** (see [Factory-delegate activation](#factory-delegate-activation)) so the container always picks the generated `[Inject]` constructor without relying on MEDI's `ActivatorUtilities` heuristic.
 * Parameter naming: derived from the member **type** name — strip leading `I` when followed by uppercase, camelCase (`IOrderRepository` → `orderRepository`). Collisions fall back to camelCased member name (trimmed `_`), then numeric suffix. C# keywords escaped with `@`.
 * Parameter order = member declaration order (file path, then position).
 * Supports generic and nested classes (nested partial chain is emitted).
+
+### Factory-delegate activation
+
+When a class has `[Inject]` members **and** a user-defined constructor, the container's default
+constructor selection (`ActivatorUtilities`) can pick the *user* constructor over the generated one,
+leaving the `[Inject]` fields unassigned. To guarantee the generated `[Inject]` constructor is used,
+the generator emits a **factory delegate** instead of a plain `(Type, Type, ServiceLifetime)`
+descriptor:
+
+```csharp
+// Generated, lives in the always-emitted Collect{X}Services body — uses only BCL types:
+registrations.Add((
+    typeof(IOrderProcessor),
+    typeof(OrderProcessor),
+    (int)DiServiceScope.Transient,
+    null,
+    false,
+    sp => new OrderProcessor(
+        global::DIGen.InjectServiceResolver.GetRequired<IOrderRepository>(sp),
+        global::DIGen.InjectServiceResolver.GetOptional<ITelemetryInitializer>(sp))));
+```
+
+* The delegate body calls `new T(...)` with one argument per `[Inject]` member. Each argument is
+  `InjectServiceResolver.GetRequired<T>(sp)` for non-optional members, or `GetOptional<T>(sp)` for
+  members annotated as nullable (`T?`) or with a default value (`= null` / `= default`).
+* Optional members tolerate a missing registration (return `null`); non-optional members throw
+  `InvalidOperationException` at resolution time when the service isn't registered. A non-optional
+  member whose type the generator can't see registered in the **current assembly** is reported as
+  **DIGEN011**.
+* `InjectServiceResolver` is embedded into **every** consuming project (it only references
+  `System.IServiceProvider`, a BCL type), so the factory delegate compiles and runs even in a
+  Domain/Application project with **no MEDI reference** — the candidate class is simply activated
+  only when a Host materializes the descriptor, and the `IServiceProvider` it receives is the one
+  the Host wired up.
+* Classes with `[Inject]` members but **no** user-defined constructor use the standard
+  `(Type serviceType, Type implementationType, ServiceLifetime)` descriptor (`Factory = null`) —
+  the container activates them by calling the generated (only) constructor directly, so there is no
+  ambiguity and no factory delegate is needed.
+* `[Inject("key")]` members: keyed service resolution requires `IKeyedServiceProvider` (a MEDI type),
+  and the generator does not (yet) emit keyed lookup for `[Inject]` members. A member carrying a key
+  is resolved by type; if the current project has no MEDI reference, **DIGEN012** is reported and the
+  key is ignored at runtime.
 
 ### Multi-project aggregation
 
@@ -146,6 +200,8 @@ Materialization (embedded only when MEDI is resolvable, alongside `DiServiceScop
 | DIGEN008 | Error | `[Service<T>]` used but `T` has no locked scope (no `[RequiredScope]`, no reachable `[assembly: RequiredExternalScope]`) |
 | DIGEN009 | Error | `[XxxService<T>]`'s lifetime disagrees with `T`'s locked scope |
 | DIGEN010 | Error | Two reachable `[assembly: RequiredExternalScope]` declarations lock the same type to different lifetimes |
+| DIGEN011 | Warning | Non-optional `[Inject]` member's type is not registered in the current assembly (factory-delegate path; referenced-assembly registrations are resolvable at runtime and not reported) |
+| DIGEN012 | Warning | `[Inject("key")]` used in a project with no reference to Microsoft.Extensions.DependencyInjection; the key is ignored and the member resolved without a key at runtime |
 
 Category `NkChinh.DI.Generator`, `helpLinkUri` → docs/diagnostics.md anchors.
 
@@ -186,5 +242,5 @@ Category `NkChinh.DI.Generator`, `helpLinkUri` → docs/diagnostics.md anchors.
 ## Open Questions
 
 None blocking — assumptions A1–A11 stand unless the user overrides them. Required Scope Validation
-(A7–A10) and the Collect/Materialize split (A11) are implemented and covered by tests per criteria
-6–8 above.
+(A7–A10), the Collect/Materialize split (A11), factory-delegate activation, and
+`DIGEN011`–`DIGEN012` are implemented and covered by tests.

@@ -27,12 +27,12 @@ public class InjectConstructorTests
 
         var source = outcome.GetSource(Hint);
 
-        Assert.Contains("[global::Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]", source);
         Assert.Contains(
             "public OrderService(global::Demo.IOrderRepository orderRepository, global::Demo.IPaymentGateway paymentGateway)",
             source);
         Assert.Contains("this._repository = orderRepository;", source);
         Assert.Contains("this._gateway = paymentGateway;", source);
+        Assert.DoesNotContain("[global::Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]", source);
         Assert.Single(Regex.Matches(source, @"public OrderService\("));
         Assert.Empty(outcome.CompilationErrors);
     }

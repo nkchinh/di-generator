@@ -17,11 +17,11 @@ namespace Microsoft.Extensions.DependencyInjection
         /// Collects all services declared with DIGen attributes in assembly 'Snapshot.Assembly' as plain
         /// data, requiring no reference to Microsoft.Extensions.DependencyInjection.
         /// </summary>
-        public static void CollectSnapshotAssemblyServices(global::System.Collections.Generic.ICollection<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)
+        public static void CollectSnapshotAssemblyServices(global::System.Collections.Generic.ICollection<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, global::System.Func<global::System.IServiceProvider, object>? Factory)> registrations)
         {
-            registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), (int)global::DIGen.DiServiceScope.Scoped, null, false));
-            registrations.Add((typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), (int)global::DIGen.DiServiceScope.Transient, null, false));
-            registrations.Add((typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), (int)global::DIGen.DiServiceScope.Singleton, "stripe", false));
+            registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), (int)global::DIGen.DiServiceScope.Scoped, null, false, null));
+            registrations.Add((typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), (int)global::DIGen.DiServiceScope.Transient, null, false, null));
+            registrations.Add((typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), (int)global::DIGen.DiServiceScope.Singleton, "stripe", false, null));
         }
 
         /// <summary>
@@ -29,7 +29,7 @@ namespace Microsoft.Extensions.DependencyInjection
         /// </summary>
         public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddSnapshotAssemblyServices(this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services)
         {
-            var registrations = new global::System.Collections.Generic.List<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)>();
+            var registrations = new global::System.Collections.Generic.List<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, global::System.Func<global::System.IServiceProvider, object>? Factory)>();
             CollectSnapshotAssemblyServices(registrations);
             return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);
         }

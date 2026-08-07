@@ -25,7 +25,7 @@ public class RequiredScopeTests
         var source = outcome.GetSource(Hint);
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             source);
         Assert.Empty(outcome.GeneratorDiagnostics);
         Assert.Empty(outcome.CompilationErrors);
@@ -49,7 +49,7 @@ public class RequiredScopeTests
         var source = outcome.GetSource(Hint);
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false));",
+            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false, null));",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -74,7 +74,7 @@ public class RequiredScopeTests
         var source = outcome.GetSource(Hint);
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IConnection), typeof(global::Demo.RedisConnection), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, false));",
+            "(int)global::DIGen.DiServiceScope.Singleton, null, false, null));",
             source);
         Assert.Empty(outcome.GeneratorDiagnostics);
         Assert.Empty(outcome.CompilationErrors);
@@ -138,7 +138,7 @@ public class RequiredScopeTests
         Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN009");
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             outcome.GetSource(Hint));
     }
 
@@ -163,7 +163,7 @@ public class RequiredScopeTests
         Assert.Empty(outcome.GeneratorDiagnostics);
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             outcome.GetSource(Hint));
     }
 
@@ -207,7 +207,7 @@ public class RequiredScopeTests
         Assert.Empty(outcome.GeneratorDiagnostics);
         Assert.Contains(
             "registrations.Add((typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             outcome.GetSource(Hint));
     }
 
@@ -272,7 +272,7 @@ public class RequiredScopeTests
         Assert.Contains("CollectTestAssemblyServices", source);
         Assert.Contains(
             "registrations.Add((typeof(global::Domain.IOrderRepository), typeof(global::Domain.SqlOrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false));",
+            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
             source);
         // No MEDI reference => no IServiceCollection-based convenience methods, and no aggregator.
         Assert.DoesNotContain("AddTestAssemblyServices", source);

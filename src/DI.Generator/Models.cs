@@ -123,6 +123,7 @@ internal sealed record InjectClassShell(
     string? Namespace,
     string ConstructorName,
     EquatableArray<TypeShell> TypeChain,
+    bool HasUserConstructor,
     string HintName);
 
 /// <summary>One [Inject] member; ordering fields preserve declaration order across partial files.</summary>
@@ -131,8 +132,17 @@ internal sealed record InjectMemberInfo(
     string TypeFqn,
     string TypeShortName,
     bool IsProperty,
+    string? Key,
+    bool IsOptional,
     string FilePath,
-    int SpanStart);
+    int SpanStart,
+    LocationInfo? Location);
+
+/// <summary>Metadata for constructor-injected services, used to emit factory delegates when a class has both a generated constructor and user-defined constructors.</summary>
+internal sealed record InjectConstructorMeta(
+    EquatableArray<string> ParamTypeFqns,
+    EquatableArray<string> ParamKeys,
+    EquatableArray<bool> ParamOptionals);
 
 /// <summary>Transform result for the [Inject] pipeline.</summary>
 internal sealed record InjectResult(

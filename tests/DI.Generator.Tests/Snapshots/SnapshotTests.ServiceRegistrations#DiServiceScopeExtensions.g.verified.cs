@@ -23,15 +23,16 @@ namespace DIGen
     /// <summary>
     /// Applies registration tuples collected by Collect{Assembly}Services methods — possibly from
     /// projects with no reference to Microsoft.Extensions.DependencyInjection — to a real
-    /// IServiceCollection. The tuple shape (Type, Type, int, string?, bool) uses only framework types
-    /// so it is identical across every assembly, unlike a project-embedded class or enum would be.
+    /// IServiceCollection. The tuple shape (Type, Type, int, string?, bool, Func{IServiceProvider, object}?)
+    /// uses only framework types so it is identical across every assembly, unlike a project-embedded
+    /// class or enum would be.
     /// </summary>
     [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
     internal static class ServiceRegistrationExtensions
     {
         public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection MaterializeServices(
             this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services,
-            global::System.Collections.Generic.IEnumerable<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)
+            global::System.Collections.Generic.IEnumerable<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, global::System.Func<global::System.IServiceProvider, object>? Factory)> registrations)
         {
             foreach (var registration in registrations)
             {
@@ -45,11 +46,24 @@ namespace DIGen
                 }
 
                 var lifetime = ((DiServiceScope)registration.Lifetime).ToServiceLifetime();
-                services.Add(registration.Key is null
-                    ? new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                        registration.ServiceType, registration.ImplementationType, lifetime)
-                    : new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                        registration.ServiceType, registration.Key, registration.ImplementationType, lifetime));
+
+                if (registration.Factory is not null)
+                {
+                    services.Add(registration.Key is null
+                        ? new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
+                            registration.ServiceType, registration.Factory, lifetime)
+                        : new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
+                            registration.ServiceType, registration.Key,
+                            (sp, key) => registration.Factory(sp), lifetime));
+                }
+                else
+                {
+                    services.Add(registration.Key is null
+                        ? new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
+                            registration.ServiceType, registration.ImplementationType, lifetime)
+                        : new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
+                            registration.ServiceType, registration.Key, registration.ImplementationType, lifetime));
+                }
             }
 
             return services;

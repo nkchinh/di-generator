@@ -15,16 +15,22 @@ Every project that installs `NkChinh.DI.Generator` and declares at least one ser
        public static class MyCompanyInfrastructureServiceCollectionExtensions
        {
            public static void CollectMyCompanyInfrastructureServices(
-               ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService)> registrations)
+               ICollection<(Type ServiceType, Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, Func<IServiceProvider, object>? Factory)> registrations)
            { /* ... */ }
        }
    }
    ```
 
-   The tuple uses only framework types (`System.Type`, `int`, `string`, `bool`) — never a
-   project-embedded class or enum — specifically so it's safe to pass across project references:
-   a type embedded independently per project (like every other DIGen attribute) would be a
-   *different* type in each assembly and wouldn't compile as a shared method parameter.
+   The tuple uses only framework types (`System.Type`, `int`, `string`, `bool`,
+   `Func<IServiceProvider, object>`) — never a project-embedded class or enum — specifically so it's
+   safe to pass across project references: a type embedded independently per project (like every
+   other DIGen attribute) would be a *different* type in each assembly and wouldn't compile as a
+   shared method parameter. The 6th tuple element (`Factory`) carries a factory delegate for classes
+   that have both `[Inject]` members and a user-defined constructor (see
+   [SPEC § Factory-delegate activation](SPEC.md#factory-delegate-activation)); it is `null`
+   otherwise. Because the delegate references only `System.IServiceProvider` (BCL, not MEDI) and
+   the always-embedded `InjectServiceResolver` helper, the tuple stays callable across MEDI-free
+   projects.
 
 2. An assembly-level **module marker** (internal infrastructure attribute), naming the `Collect`
    method — so the marker itself needs no MEDI reference either:
@@ -39,20 +45,20 @@ Every project that installs `NkChinh.DI.Generator` and declares at least one ser
    (builds a list, calls `Collect`, materializes) and, if it also has referenced modules, the
    **aggregator** `Add{Assembly}AllServices`:
 
-   ```csharp
-   public static IServiceCollection AddMyCompanyApiAllServices(this IServiceCollection services)
-   {
-       var registrations = new List<(Type, Type, int, string?, bool)>();
-       // every referenced module's Collect method, exactly once, deterministic order —
-       // regardless of whether that module itself has a MEDI reference
-       MyCompanyDomainServiceCollectionExtensions.CollectMyCompanyDomainServices(registrations);
-       MyCompanyInfrastructureServiceCollectionExtensions.CollectMyCompanyInfrastructureServices(registrations);
-       // then the host's own services (if any)
-       CollectMyCompanyApiServices(registrations);
-       // materialized exactly once, at the very end
-       return services.MaterializeServices(registrations);
-   }
-   ```
+    ```csharp
+    public static IServiceCollection AddMyCompanyApiAllServices(this IServiceCollection services)
+    {
+        var registrations = new List<(Type, Type, int, string?, bool, Func<IServiceProvider, object>?)>();
+        // every referenced module's Collect method, exactly once, deterministic order —
+        // regardless of whether that module itself has a MEDI reference
+        MyCompanyDomainServiceCollectionExtensions.CollectMyCompanyDomainServices(registrations);
+        MyCompanyInfrastructureServiceCollectionExtensions.CollectMyCompanyInfrastructureServices(registrations);
+        // then the host's own services (if any)
+        CollectMyCompanyApiServices(registrations);
+        // materialized exactly once, at the very end
+        return services.MaterializeServices(registrations);
+    }
+    ```
 
 ## Why per-project methods register only their own services
 

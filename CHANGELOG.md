@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`[Inject("key")]` accepted** — `InjectAttribute` takes an optional key as a compile-time
+  signal. In a project with no reference to `Microsoft.Extensions.DependencyInjection` the key is
+  reported as `DIGEN012` and ignored at runtime (the member resolves by type). The generator does not
+  currently emit keyed lookup for `[Inject]` members.
+- **Optional `[Inject]` members** — a member annotated nullable (`T?`) or with a default value
+  (`= null` / `= default`) is resolved via `IServiceProvider.GetService` (returns `null` when the
+  service isn't registered) instead of the default `GetRequired<T>` (throws when missing).
+- **Factory-delegate activation** — when a class has `[Inject]` members **and** a user-defined
+  constructor, the registration now carries a factory delegate (`sp => new T(...)`) using only BCL
+  types (`System.IServiceProvider` + embedded `InjectServiceResolver`) so the container always
+  activates the generated `[Inject]` constructor. The generated constructor is no longer decorated
+  with `[ActivatorUtilitiesConstructor]`, and the class's own project does not need an MEDI
+  reference for the factory to compile. Single-constructor classes keep the standard
+  `(Type, Type, ServiceLifetime)` descriptor.
+- Registration tuple gained a 6th field, `Func<IServiceProvider, object>? Factory`, carrying the
+  factory delegate above (`null` otherwise). Framework-types-only, so `Collect{X}Services` remains
+  callable across MEDI-free project references.
+- Diagnostics `DIGEN011` (non-optional `[Inject]` member's type not registered in the current
+  assembly — factory-delegate path only; referenced-assembly registrations are resolvable at runtime
+  and not reported) and `DIGEN012` (`[Inject("key")]` in a project without an MEDI reference; the
+  key is ignored at runtime).
+
 ## [0.0.1] - 2026-07-06
 
 ### Added

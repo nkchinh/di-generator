@@ -90,11 +90,19 @@ namespace DIGen
     /// <summary>
     /// Marks an instance field or property for constructor injection. All [Inject] members of a
     /// partial class are grouped into a single generated constructor.
+    /// When the project has no reference to Microsoft.Extensions.DependencyInjection,
+    /// a keyed service warning (DIGEN012) is reported and the key is ignored.
     /// </summary>
     [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
     [global::System.AttributeUsage(global::System.AttributeTargets.Field | global::System.AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
     internal sealed class InjectAttribute : global::System.Attribute
     {
+        /// <summary>Optional service key for keyed dependency injection.</summary>
+        public string? Key { get; }
+
+        public InjectAttribute() { }
+
+        public InjectAttribute(string key) { Key = key; }
     }
 
     /// <summary>Lifetime values used by scope-locking attributes; independent of any DI package.</summary>
@@ -159,6 +167,32 @@ namespace DIGen
         public ServiceAttribute() { }
 
         public ServiceAttribute(string key) { Key = key; }
+    }
+
+    /// <summary>
+    /// Resolves [Inject] constructor parameters from an <see cref="global::System.IServiceProvider"/>
+    /// using only BCL types — no dependency on Microsoft.Extensions.DependencyInjection.
+    /// Generated constructors reference this helper via factory delegates when a class has
+    /// both a generated [Inject] constructor and user-defined constructors.
+    /// </summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    internal static class InjectServiceResolver
+    {
+        /// <summary>Resolves a required service; throws when missing.</summary>
+        public static T GetRequired<T>(global::System.IServiceProvider sp)
+        {
+            var service = sp.GetService(typeof(T));
+            if (service is null)
+                throw new global::System.InvalidOperationException(
+                    $"Cannot resolve service '{typeof(T)}' for constructor injection.");
+            return (T)service;
+        }
+
+        /// <summary>Resolves an optional service, returning null when missing.</summary>
+        public static T? GetOptional<T>(global::System.IServiceProvider sp) where T : class
+        {
+            return (T?)sp.GetService(typeof(T));
+        }
     }
 }
 

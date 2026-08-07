@@ -48,24 +48,15 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .WithTrackingName("HasServiceLifetime");
 
         context.RegisterSourceOutput(
-            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules).Combine(hasServiceLifetime),
-            static (spc, input) => Emitters.EmitRegistrations(
-                spc,
-                input.Left.Left.Left.Left,
-                input.Left.Left.Left.Right,
-                input.Left.Left.Right,
-                input.Left.Right,
-                input.Right));
-
-        context.RegisterSourceOutput(hasServiceLifetime, static (spc, hasServiceLifetime) =>
-        {
-            if (hasServiceLifetime)
+            hasServiceLifetime, static (spc, hasServiceLifetime) =>
             {
-                spc.AddSource(
-                    EmbeddedSources.LifetimeExtensionsHintName,
-                    SourceText.From(EmbeddedSources.LifetimeExtensions, Encoding.UTF8));
-            }
-        });
+                if (hasServiceLifetime)
+                {
+                    spc.AddSource(
+                        EmbeddedSources.LifetimeExtensionsHintName,
+                        SourceText.From(EmbeddedSources.LifetimeExtensions, Encoding.UTF8));
+                }
+            });
 
         var injects = context.SyntaxProvider
             .ForAttributeWithMetadataName(
@@ -76,9 +67,27 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .Select(static (result, _) => result!)
             .WithTrackingName("Injects");
 
+        var collectedInjects = injects.Collect().WithTrackingName("CollectedInjects");
+
+        var injectMeta = collectedInjects
+            .Select(static (results, _) => Emitters.BuildInjectMeta(results))
+            .WithTrackingName("InjectMeta");
+
+        // Emit generated [Inject] constructors (partial-class files).
         context.RegisterSourceOutput(
-            injects.Collect(),
+            collectedInjects,
             static (spc, results) => Emitters.EmitConstructors(spc, results));
+
+        context.RegisterSourceOutput(
+            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules).Combine(hasServiceLifetime).Combine(injectMeta),
+            static (spc, input) => Emitters.EmitRegistrations(
+                spc,
+                input.Left.Left.Left.Left.Left,
+                input.Left.Left.Left.Left.Right,
+                input.Left.Left.Left.Right,
+                input.Left.Left.Right,
+                input.Left.Right,
+                input.Right));
     }
 
     private static IncrementalValueProvider<EquatableArray<ServiceResult>> CollectServices(
