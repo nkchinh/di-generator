@@ -74,17 +74,27 @@ internal static class Parsers
         var isHosted = symbol.AllInterfaces.Any(static i =>
             i.ToDisplayString() == "Microsoft.Extensions.Hosting.IHostedService");
 
-        return new ServiceResult(
-            new ServiceInfo(
-                symbol.ToDisplayString(FullyQualified),
-                serviceType?.ToDisplayString(FullyQualified),
-                lifetime,
-                key,
-                isHosted,
+        var serviceInfo = new ServiceInfo(
+            symbol.ToDisplayString(FullyQualified),
+            serviceType?.ToDisplayString(FullyQualified),
+            lifetime,
+            key,
+            isHosted,
+            location,
+            IsAutoScope: lifetime is null,
+            LockedLifetime: serviceType is not null ? GetRequiredScopeLifetime(serviceType) : null);
+
+        var publishedServiceType = serviceType ?? symbol;
+        var diagnostic =
+            (!IsEffectivelyPublic(symbol) || !IsEffectivelyPublic(publishedServiceType))
+            ? DiagnosticInfo.Create(
+                DiagnosticDescriptors.ServiceTypeNotPublic,
                 location,
-                IsAutoScope: lifetime is null,
-                LockedLifetime: serviceType is not null ? GetRequiredScopeLifetime(serviceType) : null),
-            null);
+                publishedServiceType.ToDisplayString(MessageFormat),
+                symbol.ToDisplayString(MessageFormat))
+            : null;
+
+        return new ServiceResult(serviceInfo, diagnostic);
     }
 
     private static string? GetRequiredScopeLifetime(INamedTypeSymbol serviceType)
@@ -133,6 +143,19 @@ internal static class Parsers
         }
 
         return false;
+    }
+
+    private static bool IsEffectivelyPublic(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            if (current.DeclaredAccessibility != Accessibility.Public)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // ---------------------------------------------------------------- [Inject]
@@ -324,7 +347,7 @@ internal static class Parsers
             {
                 if (attribute.AttributeClass is { Name: "ServiceDefinitionAttribute" } attributeClass &&
                     attributeClass.ContainingNamespace.ToDisplayString() == "DIGen.Generated" &&
-                    ReadServiceDefinition(attribute) is { } definition)
+                    ReadServiceDefinition(attribute, compilation) is { } definition)
                 {
                     definitions.Add(definition);
                 }
@@ -339,7 +362,7 @@ internal static class Parsers
                 .ToArray());
     }
 
-    private static ServiceDefinitionData? ReadServiceDefinition(AttributeData attribute)
+    private static ServiceDefinitionData? ReadServiceDefinition(AttributeData attribute, Compilation compilation)
     {
         var args = attribute.ConstructorArguments;
         if (args.Length < 10 || args[0].Value is not ITypeSymbol implementation ||
@@ -366,7 +389,9 @@ internal static class Parsers
             new EquatableArray<string>(ReadStringValues(args[6])),
             new EquatableArray<string>(ReadTypeFqnValues(args[7])),
             new EquatableArray<string>(ReadStringValues(args[8])),
-            new EquatableArray<bool>(ReadBoolValues(args[9])));
+            new EquatableArray<bool>(ReadBoolValues(args[9])),
+            compilation.IsSymbolAccessibleWithin(implementation, compilation.Assembly) &&
+            compilation.IsSymbolAccessibleWithin(service, compilation.Assembly));
     }
 
     private static string[] ReadStringValues(TypedConstant constant)

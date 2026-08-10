@@ -25,6 +25,18 @@ internal static class Emitters
         ReportDiagnostics(context, results.Select(static r => r.Diagnostic));
         ReportDiagnostics(context, externalScopeRules.Diagnostics.Select(static d => (DiagnosticInfo?)d));
 
+        foreach (var definition in publishedDefinitions.Where(static d => !d.IsAccessibleToConsumer))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.ReferencedServiceNotAccessible,
+                Location.None,
+                definition.ServiceTypeFqn,
+                definition.ImplementationTypeFqn));
+        }
+
+        publishedDefinitions = new EquatableArray<ServiceDefinitionData>(
+            publishedDefinitions.Where(static d => d.IsAccessibleToConsumer).ToArray());
+
         var externalScopeByType = externalScopeRules.Rules.ToDictionary(
             static r => r.TypeFqn, static r => r.Lifetime, StringComparer.Ordinal);
 
@@ -86,10 +98,11 @@ internal static class Emitters
                 service.Key,
                 service.IsHostedService,
                 requiresFactory,
-                names,
-                types,
-                keys,
-                optionals));
+                 names,
+                 types,
+                 keys,
+                 optionals,
+                 true));
         }
 
         return definitions;

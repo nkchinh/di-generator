@@ -54,6 +54,28 @@ public class DiagnosticTests
     }
 
     [Fact]
+    public void DIGEN012_Warns_WhenServiceOrImplementationIsNotPublic()
+    {
+        var outcome = GeneratorTestHelper.Run("""
+            using DIGen;
+
+            namespace Demo;
+
+            internal interface IInternalService { }
+
+            [SingletonService<IInternalService>]
+            internal class InternalService : IInternalService { }
+            """);
+
+        var diagnostic = AssertSingle(outcome, "DIGEN012", DiagnosticSeverity.Warning);
+        Assert.Contains("IInternalService", diagnostic.GetMessage());
+        Assert.Contains("InternalService", diagnostic.GetMessage());
+        Assert.Contains(
+            "services.AddSingleton<global::Demo.IInternalService, global::Demo.InternalService>();",
+            outcome.GetSource("ServiceCollectionExtensions.g.cs"));
+    }
+
+    [Fact]
     public void DIGEN002_Fires_WhenInjectClassIsNotPartial()
     {
         var outcome = GeneratorTestHelper.Run("""

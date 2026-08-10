@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic `DIGEN011` (non-optional `[Inject]` member's type not registered in the current
   assembly **or in any reachable referenced assembly's published `ServiceDefinition`s** —
   factory-delegate path only).
+- Diagnostic `DIGEN012` warns when a published service interface or implementation is not public
+  and may be inaccessible to generated registrations in another assembly.
+- Diagnostic `DIGEN013` warns in the host when an inaccessible referenced service definition is
+  skipped instead of producing uncompilable generated registration code.
 
 ### Changed
 

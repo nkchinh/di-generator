@@ -176,3 +176,21 @@ require factory activation, but do not broaden DIGEN011's warning scope.
 A keyed `[Inject("key")]` member on a registered class is honored through a generated factory using
 `GetRequiredKeyedService`/`GetKeyedService`, even when the class has no user constructor. No
 diagnostic is reported for a key alone.
+## DIGEN012
+
+**Severity:** Warning
+
+`DIGEN012` warns when a registered service interface or implementation is not effectively
+`public`. The registration is valid inside its defining assembly, but a generated registration
+in another assembly may not compile. Make both types `public`, or grant the consuming assembly
+access with `InternalsVisibleTo`.
+
+## DIGEN013
+
+**Severity:** Warning
+
+`DIGEN013` is reported by the host when a referenced assembly publishes a service definition whose
+service or implementation type is inaccessible from the host. That definition is excluded from the
+generated registration method, so the host still builds without generating uncompilable code. The
+service will not be available through the generated registration until both types are `public`, or
+the host assembly is granted access with `InternalsVisibleTo`.

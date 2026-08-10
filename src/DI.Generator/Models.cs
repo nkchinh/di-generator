@@ -176,7 +176,8 @@ internal sealed record ServiceDefinitionData(
     EquatableArray<string> MemberNames,
     EquatableArray<string> MemberTypeFqns,
     EquatableArray<string> MemberKeys,
-    EquatableArray<bool> MemberOptionals);
+    EquatableArray<bool> MemberOptionals,
+    bool IsAccessibleToConsumer);
 
 /// <summary>Combined input for the registration emitter (own services, name, scope locks, MEDI
 /// availability, [Inject] metadata and published definitions from referenced assemblies).</summary>

@@ -117,4 +117,24 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         helpLinkUri: HelpBase + "#digen011");
+
+    public static readonly DiagnosticDescriptor ServiceTypeNotPublic = new(
+        id: "DIGEN012",
+        title: "Cross-assembly service types should be public",
+        messageFormat: "Service '{0}' or its implementation '{1}' is not public; generated registrations from another assembly may not compile",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "Services published for cross-assembly generated registration must expose both the service and implementation types, unless the consuming assembly has access through InternalsVisibleTo.",
+        helpLinkUri: HelpBase + "#digen012");
+
+    public static readonly DiagnosticDescriptor ReferencedServiceNotAccessible = new(
+        id: "DIGEN013",
+        title: "Referenced service cannot be accessed by generated registration",
+        messageFormat: "Referenced service '{0}' from '{1}' was not registered because its service or implementation type is inaccessible from this host; make both types public or use InternalsVisibleTo",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "A host cannot emit a registration for an inaccessible service definition published by a referenced assembly.",
+        helpLinkUri: HelpBase + "#digen013");
 }

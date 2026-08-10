@@ -15,6 +15,7 @@
     new global::System.Type[] {  },
     new string[] {  },
     new bool[] {  })]
+
 [assembly: global::DIGen.Generated.ServiceDefinition(
     typeof(global::Demo.ScratchBuffer),
     typeof(global::Demo.ScratchBuffer),
@@ -38,3 +39,4 @@
     new global::System.Type[] {  },
     new string[] {  },
     new bool[] {  })]
+
