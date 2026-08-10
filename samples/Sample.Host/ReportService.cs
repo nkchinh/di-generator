@@ -29,14 +29,6 @@ public partial class ReportService : IReportService
     // Assigned from the user constructor below; the default keeps it non-null whichever ctor runs.
     private readonly string _locale = "en-US";
 
-    // A user-defined constructor. Its presence switches the registration to a factory delegate, so
-    // the generated [Inject] constructor above is the one the container activates.
-    public ReportService(string locale)
-    {
-        _locale = locale;
-        _processor = null!; // the factory-delegate path injects _processor via the generated ctor
-    }
-
     public string Build()
     {
         var plugin = _plugin is null ? "(no plugin registered)" : _plugin.Name;

@@ -49,8 +49,7 @@ public class DiagnosticTests
 
         Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN001");
         Assert.Contains(
-            "registrations.Add((typeof(global::Demo.IBase), typeof(global::Demo.Impl), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, false, null));",
+            "services.AddSingleton<global::Demo.IBase, global::Demo.Impl>();",
             outcome.GetSource("ServiceCollectionExtensions.g.cs"));
     }
 
@@ -129,7 +128,7 @@ public class DiagnosticTests
 
             public partial class Holder
             {
-                [Inject] public IClock Clock => null!;
+                [Inject] public IClock Clock => throw new global::System.NotSupportedException();
             }
             """);
 
@@ -188,7 +187,7 @@ public class DiagnosticTests
                 [Inject] private readonly IMissing _missing;
 
                 // User-defined constructor triggers factory-delegate path
-                public Consumer() { _missing = null!; }
+                public Consumer() => throw new global::System.NotSupportedException();
                 public string Greet() => "";
             }
             """);
@@ -220,7 +219,7 @@ public class DiagnosticTests
             {
                 [Inject] private readonly IGreeter _greeter;
 
-                public Consumer() { _greeter = null!; }
+                public Consumer() => throw new global::System.NotSupportedException();
                 public string Greet() => "";
             }
             """);
@@ -246,7 +245,7 @@ public class DiagnosticTests
             {
                 [Inject] private readonly IGreeter? _greeter;
 
-                public Consumer() { _greeter = null!; }
+                public Consumer() => throw new global::System.NotSupportedException();
                 public string Greet() => "";
             }
             """);
@@ -273,74 +272,6 @@ public class DiagnosticTests
             """);
 
         Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN011");
-    }
-
-    [Fact]
-    public void DIGEN012_Fires_WhenKeyedInjectWithoutMedi()
-    {
-        var outcome = GeneratorTestHelper.Run("""
-            using DIGen;
-
-            namespace Demo;
-
-            public interface IGreeter { string Greet(); }
-
-            [SingletonService<IGreeter>]
-            public partial class Consumer : IGreeter
-            {
-                [Inject("myKey")] private readonly IGreeter _greeter;
-                public string Greet() => "";
-            }
-            """,
-            baseReferences: GeneratorTestHelper.ReferencesWithoutMedi);
-
-        var diagnostic = AssertSingle(outcome, "DIGEN012", DiagnosticSeverity.Warning);
-        Assert.Contains("Consumer", diagnostic.GetMessage());
-        Assert.Contains("_greeter", diagnostic.GetMessage());
-        Assert.Contains("myKey", diagnostic.GetMessage());
-    }
-
-    [Fact]
-    public void DIGEN012_DoesNotFire_WhenProjectHasMedi()
-    {
-        var outcome = GeneratorTestHelper.Run("""
-            using DIGen;
-
-            namespace Demo;
-
-            public interface IGreeter { string Greet(); }
-
-            [SingletonService<IGreeter>]
-            public partial class Consumer : IGreeter
-            {
-                [Inject("myKey")] private readonly IGreeter _greeter;
-                public string Greet() => "";
-            }
-            """);
-
-        Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN012");
-    }
-
-    [Fact]
-    public void DIGEN012_DoesNotFire_WhenKeyedInjectWithoutMedi_ButNoKey()
-    {
-        var outcome = GeneratorTestHelper.Run("""
-            using DIGen;
-
-            namespace Demo;
-
-            public interface IGreeter { string Greet(); }
-
-            [SingletonService<IGreeter>]
-            public partial class Consumer : IGreeter
-            {
-                [Inject] private readonly IGreeter _greeter;
-                public string Greet() => "";
-            }
-            """,
-            baseReferences: GeneratorTestHelper.ReferencesWithoutMedi);
-
-        Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN012");
     }
 
     [Fact]

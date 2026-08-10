@@ -16,4 +16,3 @@ DIGEN008 | NkChinh.DI.Generator | Error | [Service<T>] used but T has no locked 
 DIGEN009 | NkChinh.DI.Generator | Error | Lifetime attribute disagrees with T's locked required scope
 DIGEN010 | NkChinh.DI.Generator | Error | Conflicting [assembly: RequiredExternalScope] declarations for the same type
 DIGEN011 | NkChinh.DI.Generator | Warning | [Inject] constructor parameter may not be resolvable from DI
-DIGEN012 | NkChinh.DI.Generator | Warning | [Inject] keyed service requires MEDI reference

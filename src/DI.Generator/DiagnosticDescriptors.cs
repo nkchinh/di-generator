@@ -111,21 +111,10 @@ internal static class DiagnosticDescriptors
         id: "DIGEN011",
         title: "[Inject] constructor parameter may not be resolvable from DI",
         messageFormat: "Constructor parameter '{1}' of type '{2}' in '{0}' cannot be verified as a registered service; " +
-            "if not registered at runtime, the factory delegate will throw — for options, add [Inject] on this member as " +
-            "nullable (T?) or with a default value (= default)",
+            "if not registered at runtime, the factory delegate will throw — mark the member nullable (T?) " +
+            "if the dependency is optional",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         helpLinkUri: HelpBase + "#digen011");
-
-    public static readonly DiagnosticDescriptor InjectKeyedWithoutMedi = new(
-        id: "DIGEN012",
-        title: "[Inject] keyed service requires MEDI reference",
-        messageFormat: "[Inject] member '{0}.{1}' specifies key '{2}' but this project has no reference " +
-            "to Microsoft.Extensions.DependencyInjection; the key will be ignored and the service resolved " +
-            "without a key at runtime",
-        category: Category,
-        defaultSeverity: DiagnosticSeverity.Warning,
-        isEnabledByDefault: true,
-        helpLinkUri: HelpBase + "#digen012");
 }

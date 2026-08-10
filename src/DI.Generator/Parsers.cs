@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -11,6 +12,13 @@ internal static class Parsers
             SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers |
             SymbolDisplayMiscellaneousOptions.UseSpecialTypes |
             SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+    /// <summary>Fully-qualified without nullable annotations, safe for <c>typeof(...)</c> argument
+    /// emission and generic type arguments.</summary>
+    private static readonly SymbolDisplayFormat FullyQualifiedTypeOf = SymbolDisplayFormat.FullyQualifiedFormat
+        .WithMiscellaneousOptions(
+            SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers |
+            SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
     private static readonly SymbolDisplayFormat MessageFormat = SymbolDisplayFormat.CSharpErrorMessageFormat;
 
@@ -201,9 +209,11 @@ internal static class Parsers
             ? keyValue
             : null;
 
-        // Optional when nullable type annotation or field has default value (= null etc.)
+        // In a nullable-aware project, the declared annotation is the contract. In an oblivious
+        // project an initializer remains the only available signal that null is acceptable.
         var isOptional = memberType.NullableAnnotation == NullableAnnotation.Annotated;
-        if (!isOptional && context.TargetNode is VariableDeclaratorSyntax varDecl &&
+        if (!isOptional && memberType.NullableAnnotation != NullableAnnotation.NotAnnotated &&
+            context.TargetNode is VariableDeclaratorSyntax varDecl &&
             varDecl.Initializer is not null)
         {
             isOptional = true;
@@ -297,32 +307,98 @@ internal static class Parsers
         _ => "class",
     };
 
-    // ---------------------------------------------------------------- referenced modules
+    // ---------------------------------------------------------------- published definitions
 
-    public static EquatableArray<ModuleInfo> GetReferencedModules(Compilation compilation)
+    /// <summary>
+    /// Reads the <c>[assembly: ServiceDefinition]</c> attributes published by every referenced assembly.
+    /// Host projects combine these with their own services to emit direct registrations; the set of
+    /// published service type names is additionally used as the cross-assembly "registered" pool when
+    /// validating <c>[Inject]</c> members (DIGEN011).
+    /// </summary>
+    public static EquatableArray<ServiceDefinitionData> ReadReferencedServiceDefinitions(Compilation compilation)
     {
-        var modules = new List<ModuleInfo>();
+        var definitions = new List<ServiceDefinitionData>();
         foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols)
         {
             foreach (var attribute in assembly.GetAttributes())
             {
-                if (attribute.AttributeClass is { Name: "ServiceRegistrationModuleAttribute" } attributeClass &&
+                if (attribute.AttributeClass is { Name: "ServiceDefinitionAttribute" } attributeClass &&
                     attributeClass.ContainingNamespace.ToDisplayString() == "DIGen.Generated" &&
-                    attribute.ConstructorArguments.Length == 2 &&
-                    attribute.ConstructorArguments[0].Value is string methodName &&
-                    attribute.ConstructorArguments[1].Value is string typeName)
+                    ReadServiceDefinition(attribute) is { } definition)
                 {
-                    modules.Add(new ModuleInfo(methodName, typeName));
+                    definitions.Add(definition);
                 }
             }
         }
 
-        return new EquatableArray<ModuleInfo>(
-            modules
-                .Distinct()
-                .OrderBy(static m => m.MethodName, StringComparer.Ordinal)
-                .ThenBy(static m => m.ExtensionsTypeName, StringComparer.Ordinal)
+        return new EquatableArray<ServiceDefinitionData>(
+            definitions
+                .OrderBy(static d => d.ImplementationTypeFqn, StringComparer.Ordinal)
+                .ThenBy(static d => d.ServiceTypeFqn, StringComparer.Ordinal)
+                .ThenBy(static d => d.Key, StringComparer.Ordinal)
                 .ToArray());
+    }
+
+    private static ServiceDefinitionData? ReadServiceDefinition(AttributeData attribute)
+    {
+        var args = attribute.ConstructorArguments;
+        if (args.Length < 10 || args[0].Value is not ITypeSymbol implementation ||
+            args[2].Value is not int lifetimeValue)
+        {
+            return null;
+        }
+
+        var service = args[1].Value as ITypeSymbol ?? implementation;
+        var key = args[3].Value as string;
+        var lifetime = LifetimeName(lifetimeValue);
+        if (lifetime is null)
+        {
+            return null;
+        }
+
+        return new ServiceDefinitionData(
+            service.ToDisplayString(FullyQualifiedTypeOf),
+            implementation.ToDisplayString(FullyQualifiedTypeOf),
+            lifetime,
+            key,
+            args[4].Value is bool isHosted && isHosted,
+            args[5].Value is bool requiresFactory && requiresFactory,
+            new EquatableArray<string>(ReadStringValues(args[6])),
+            new EquatableArray<string>(ReadTypeFqnValues(args[7])),
+            new EquatableArray<string>(ReadStringValues(args[8])),
+            new EquatableArray<bool>(ReadBoolValues(args[9])));
+    }
+
+    private static string[] ReadStringValues(TypedConstant constant)
+    {
+        if (constant.Kind != TypedConstantKind.Array)
+        {
+            return [];
+        }
+
+        return constant.Values.Select(static v => v.Value as string ?? string.Empty).ToArray();
+    }
+
+    private static string[] ReadTypeFqnValues(TypedConstant constant)
+    {
+        if (constant.Kind != TypedConstantKind.Array)
+        {
+            return [];
+        }
+
+        return constant.Values
+            .Select(static v => (v.Value as ITypeSymbol)?.ToDisplayString(FullyQualifiedTypeOf) ?? string.Empty)
+            .ToArray();
+    }
+
+    private static bool[] ReadBoolValues(TypedConstant constant)
+    {
+        if (constant.Kind != TypedConstantKind.Array)
+        {
+            return [];
+        }
+
+        return constant.Values.Select(static v => v.Value is bool value && value).ToArray();
     }
 
     // ---------------------------------------------------------------- external scope rules

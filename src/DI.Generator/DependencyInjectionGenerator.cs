@@ -34,9 +34,9 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             .Select(static (compilation, _) => compilation.AssemblyName ?? "Assembly")
             .WithTrackingName("AssemblyName");
 
-        var referencedModules = context.CompilationProvider
-            .Select(static (compilation, _) => Parsers.GetReferencedModules(compilation))
-            .WithTrackingName("Modules");
+        var publishedDefinitions = context.CompilationProvider
+            .Select(static (compilation, _) => Parsers.ReadReferencedServiceDefinitions(compilation))
+            .WithTrackingName("ReferencesScan");
 
         var externalScopeRules = context.CompilationProvider
             .Select(static (compilation, _) => Parsers.GetExternalScopeRules(compilation))
@@ -64,7 +64,8 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                 static (node, _) => node is VariableDeclaratorSyntax or PropertyDeclarationSyntax,
                 static (ctx, _) => Parsers.GetInjectResult(ctx))
             .Where(static result => result is not null)
-            .Select(static (result, _) => result!)
+            .Select(static (result, _) => result ??
+                throw new InvalidOperationException("Inject parser returned null after filtering."))
             .WithTrackingName("Injects");
 
         var collectedInjects = injects.Collect().WithTrackingName("CollectedInjects");
@@ -78,16 +79,31 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
             collectedInjects,
             static (spc, results) => Emitters.EmitConstructors(spc, results));
 
-        context.RegisterSourceOutput(
-            services.Combine(assemblyName).Combine(referencedModules).Combine(externalScopeRules).Combine(hasServiceLifetime).Combine(injectMeta),
-            static (spc, input) => Emitters.EmitRegistrations(
-                spc,
+        var registrationInput = services
+            .Combine(assemblyName)
+            .Combine(externalScopeRules)
+            .Combine(hasServiceLifetime)
+            .Combine(injectMeta)
+            .Combine(publishedDefinitions)
+            .Select(static (input, _) => new RegistrationPipelineInput(
                 input.Left.Left.Left.Left.Left,
                 input.Left.Left.Left.Left.Right,
                 input.Left.Left.Left.Right,
                 input.Left.Left.Right,
                 input.Left.Right,
-                input.Right));
+                input.Right))
+            .WithTrackingName("RegistrationInput");
+
+        context.RegisterSourceOutput(
+            registrationInput,
+            static (spc, input) => Emitters.EmitRegistrations(
+                spc,
+                input.Services,
+                input.AssemblyName,
+                input.ExternalScopeRules,
+                input.HasServiceLifetime,
+                input.InjectMeta,
+                input.PublishedDefinitions));
     }
 
     private static IncrementalValueProvider<EquatableArray<ServiceResult>> CollectServices(
@@ -136,5 +152,6 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                 static (node, _) => node is ClassDeclarationSyntax,
                 (ctx, _) => Parsers.GetServiceResult(ctx, lifetime))
             .Where(static result => result is not null)
-            .Select(static (result, _) => result!);
+            .Select(static (result, _) => result ??
+                throw new InvalidOperationException("Service parser returned null after filtering."));
 }

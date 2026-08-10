@@ -14,13 +14,18 @@ package needs is generated into your project as `internal` code at compile time.
 ## Features
 
 - 🏷️ **Attribute-driven registration** — `[SingletonService]`, `[ScopedService<T>]`, `[TransientService]`, with optional keys for keyed services and automatic `AddHostedService` for `IHostedService` implementations.
-- 🔧 **`[Inject]` constructor generation** — annotate fields/properties; all `[Inject]` members of a partial class are grouped into **one** generated constructor with camelCase parameters. Optional keys (`[Inject("key")]`) request keyed dependencies; nullable/ defaulted members (`T?` / `= null` / `= default`) become **optional** and resolve to `null` when the service isn't registered. When the class also declares a user constructor, the generator emits a **factory delegate** (using only BCL `IServiceProvider`) so the container always activates the generated constructor — no `[ActivatorUtilitiesConstructor]` heuristic and no MEDI dependency required for the host of the class to compile.
-- 🔑 **`[Inject("key")]` accepted** — `[Inject]` optionally takes a service key; in projects with no MEDI reference it warns `DIGEN012` (the key is ignored at runtime and the member resolves by type).
-- 🛡️ **Compile-time safety nets** — `DIGEN011` warns when a non-optional `[Inject]` parameter's type isn't visibly registered in the current assembly (factory-delegate path only — cross-assembly registrations are resolvable at runtime and not reported); `DIGEN012` warns when a keyed `[Inject]` is used without an MEDI reference.
-- 🧩 **Multi-project aware** — every project generates its own `Add{Assembly}Services()`; the host additionally gets `Add{Assembly}AllServices()` that chains every referenced project exactly once.
+- 🔧 **`[Inject]` constructor generation** — annotate fields/properties; all `[Inject]` members of a partial class are grouped into **one** generated constructor with camelCase parameters. Optional keys (`[Inject("key")]`) request keyed dependencies; nullable members (`T?`) become **optional** and resolve to `null` when the service isn't registered. In nullable-disabled projects, an initializer is used as the equivalent optional signal. The generator emits a **factory delegate** whenever constructor selection, keyed lookup, or optional lookup requires it — no `[ActivatorUtilitiesConstructor]` heuristic and no MEDI dependency required for the class's project to compile.
+- 🔑 **`[Inject("key")]`** — optionally keyed; a registered service gets a generated factory using
+  `GetRequiredKeyedService`/`GetKeyedService`, even when the class has no user constructor.
+- 🛡️ **Compile-time safety nets** — `DIGEN011` warns when a non-optional `[Inject]` parameter's type
+  isn't visibly registered in the current assembly or in any referenced project's published
+  definitions (factory-delegate path only).
+- 🧩 **Multi-project aware** — every project with services publishes assembly-level `ServiceDefinition`
+  attributes (no MEDI reference needed); the host's `Add{Assembly}Services()` registers its own plus
+  every referenced project's services exactly once.
 - 🧬 **Works in projects with no MEDI reference at all** — a Domain/Application project that only declares interfaces and self-registers via `[Service<T>]`/lifetime attributes compiles cleanly with zero dependency on `Microsoft.Extensions.DependencyInjection`; the `IServiceCollection`-based methods appear only where a project actually references MEDI.
 - 🔒 **Required Scope Validation** — lock an interface's lifetime once with `[RequiredScope]` (or `[assembly: RequiredExternalScope]` for third-party types); `[Service<T>]` then resolves it automatically, and any explicit lifetime attribute that disagrees is a compile error — no more accidental captive dependencies (e.g. a `Scoped` `DbContext` registered as `Singleton`).
-- 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN010`), and risky-but-valid constructions surface as warnings (`DIGEN011`–`DIGEN012`), never silently wrong code.
+- 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN010`), and risky-but-valid constructions surface as warnings (`DIGEN011`), never silently wrong code.
 - 📦 **Pure generator package** — ships only an analyzer assembly; no `lib/`, no runtime dependency added to your app.
 - 🌱 **Trimming & Native AOT friendly** — registrations are plain `services.Add{Lifetime}<...>()` calls generated at compile time, not reflection over your assemblies at startup, so there's nothing for the trimmer to break and nothing incompatible with Native AOT.
 - ⚡ **Fully incremental** (`IIncrementalGenerator`) — cache-friendly pipelines, fast IDE experience.
@@ -37,7 +42,7 @@ package needs is generated into your project as `internal` code at compile time.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.2" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.3" PrivateAssets="all" />
 </ItemGroup>
 ```
 
@@ -122,53 +127,49 @@ reference to MEDI at all.
 
 #### Optional `[Inject]` members
 
-An `[Inject]` member annotated as **nullable** (`T?`) or with a **default value** (`= null`,
-`= default`) is treated as **optional** and resolved via `IServiceProvider.GetService` (returns
-`null` when missing). A non-optional member is resolved with `GetRequired<T>` and throws at runtime
-when the service isn't registered:
+In a nullable-enabled project, an `[Inject]` member is optional only when annotated **nullable**
+(`T?`). In a nullable-disabled project, where `T?` cannot express that contract, an initializer is
+used as the optional signal. Optional members resolve through `IServiceProvider.GetService` (returns
+`null` when missing); non-optional members use `GetRequired<T>` and throw when missing:
 
 ```csharp
 [Inject] private readonly IOrderRepository _repository;   // required — throws if missing
 [Inject] private readonly ITelemetryInitializer? _telemetry;  // optional — null if missing
-[Inject] private readonly ITelemetryInitializer _telemetry = NoOpInitializer.Instance; // optional (default)
 ```
 
 A non-optional member whose type the generator can't see registered in the **current assembly** is
 reported as **`DIGEN011`** — referenced-assembly registrations are resolvable at runtime and are
 *not* reported (the check is intentionally local to avoid cross-project false positives).
 
-#### Keyed `[Inject]` — accepted, warns without MEDI
+#### Keyed `[Inject]` — honored on the factory-delegate path
 
 ```csharp
 [Inject("primary")] private readonly ICache _primaryCache;
 ```
 
-`InjectAttribute` accepts an optional key (`[Inject("key")]`), signaling intent for a keyed
-dependency. Today the generator does **not** emit keyed lookup — the member is resolved by type via
-`IServiceProvider.GetService`, and the key is used as a compile-time signal: in a project with **no**
-MEDI reference, `DIGEN012` warns that the key will be ignored and the member resolved without a key
-(so the code still compiles in a MEDI-free Domain/Application project). Keep the key when the intent
-is documentation-only; if you need *actual* keyed resolution at runtime, resolve the keyed service
-explicitly (for example through `IKeyedServiceProvider` / `[FromKeyedServices]`) rather than relying
-on `[Inject("key")]` for it.
+`InjectAttribute` accepts an optional key (`[Inject("key")]`). When the containing class is
+registered as a service, the generated factory resolves the member **with the key** via
+`GetRequiredKeyedService`/`GetKeyedService`, even if the class has no user-defined constructor. A key
+alone never produces a warning.
 
 ### Multi-project solutions
 
-Install the package in **every** project that declares services. Each project generates its own
-extension method named after its `AssemblyName`:
+Install the package in **every** project that declares services. Every project with services
+publishes assembly-level `ServiceDefinition` attributes (no MEDI reference needed). The host's
+generated extension method — named after its `AssemblyName` — registers its own services **plus**
+every service published by referenced projects:
 
 | Project (AssemblyName) | Generated method |
 |---|---|
-| `MyCompany.Domain` | `AddMyCompanyDomainServices()` |
-| `MyCompany.Infrastructure` | `AddMyCompanyInfrastructureServices()` |
-| `MyCompany.Api` (host) | `AddMyCompanyApiServices()` + `AddMyCompanyApiAllServices()` |
+| `MyCompany.Domain` | publishes definitions (no MEDI reference) |
+| `MyCompany.Infrastructure` | publishes definitions, `AddMyCompanyInfrastructureServices()` |
+| `MyCompany.Api` (host) | `AddMyCompanyApiServices()` — own + referenced, exactly once |
 
-The host's `Add…AllServices()` chains every referenced project's method exactly once (including
-transitive references, deduplicated — safe for diamond dependency graphs), then the host's own
-services:
+The host reads the union of all reachable definitions once (deduplicated — safe for diamond
+dependency graphs), so one call registers everything across the whole graph:
 
 ```csharp
-builder.Services.AddMyCompanyApiAllServices(); // one call registers everything
+builder.Services.AddMyCompanyApiServices(); // one call registers everything
 ```
 
 See [docs/multi-project.md](docs/multi-project.md) for details and the [samples](samples) folder
@@ -220,8 +221,8 @@ types (no runtime dependency):
 | `[...Service("key")]` | `services.AddKeyed{Lifetime}(...)` |
 | any of the above on an `IHostedService` implementation | `services.AddHostedService<Impl>()` |
 | `[Inject]` on a field/property | parameter of the single generated constructor |
-| `[Inject("key")]` | accepted; warns `DIGEN012` in a project without MEDI. Key is currently informational — the member resolves by type (no keyed lookup emitted) |
-| `[Inject]` on a `T?` member or member with `= null`/`= default` | optional parameter — resolves to `null` when the service isn't registered |
+| `[Inject("key")]` | keyed resolution through a generated factory whenever the containing class is registered |
+| `[Inject]` on a `T?` member | optional parameter — resolves to `null` when the service isn't registered; nullable-disabled projects use an initializer as the optional signal |
 | `[RequiredScope(DiServiceScope)]` on an interface | locks the lifetime any registration of it must use |
 | `[assembly: RequiredExternalScope(typeof(T), DiServiceScope)]` | locks the lifetime for a type you don't own |
 | `[Service<TService>]` | registers using whatever lifetime `TService` is locked to |
@@ -240,8 +241,7 @@ types (no runtime dependency):
 | `DIGEN008` | Error | `[Service<T>]` used but `T` has no locked scope |
 | `DIGEN009` | Error | An explicit lifetime attribute disagrees with `T`'s locked scope |
 | `DIGEN010` | Error | Two `[assembly: RequiredExternalScope]` declarations lock the same type differently |
-| `DIGEN011` | Warning | Non-optional `[Inject]` member's type not registered in the current assembly (factory-delegate path only) |
-| `DIGEN012` | Warning | `[Inject("key")]` used in a project with no MEDI reference; key ignored at runtime |
+| `DIGEN011` | Warning | Non-optional `[Inject]` member's type not registered in the current assembly or any referenced project's published definitions (factory-delegate path only) |
 
 Full descriptions and fixes: [docs/diagnostics.md](docs/diagnostics.md).
 
@@ -264,21 +264,21 @@ The package is an analyzer-only NuGet (`analyzers/dotnet/cs/`). At compile time 
 
 1. Embeds the `DIGen` attributes as `internal` types into your compilation.
 2. Scans classes with lifetime attributes → resolves `[Service<T>]` and validates locked scopes
-   (`[RequiredScope]` / `[assembly: RequiredExternalScope]`) → emits `Collect{Assembly}Services(...)`
-   in the `Microsoft.Extensions.DependencyInjection` namespace, plus an assembly-level module marker
-   — **no reference to MEDI required for this step**. `Collect` builds a list of registrations as a
-   `(Type, Type, int, string?, bool)` tuple (framework types only), never an `IServiceCollection` call
-   directly.
+   (`[RequiredScope]` / `[assembly: RequiredExternalScope]`) → emits one `[assembly: ServiceDefinition]`
+   per service in the owning project, and reads the definitions published by every referenced
+   assembly — **no reference to MEDI required for this step**. A `ServiceDefinition` carries only
+   framework-typed data (implementation/service types, lifetime, key, hosted flag, `[Inject]` member
+   metadata), so it is portable across project references.
 3. **Only if your project resolves MEDI**, additionally emits `Add{Assembly}Services(this IServiceCollection)`
-   (materializes its own `Collect` output) and, if it references other modules, the aggregator
-   `Add{Assembly}AllServices()` — which calls every referenced module's `Collect` method into one
-   combined list (each exactly once, even across diamond dependency graphs) and materializes once at
-   the end. A referenced module needs no MEDI reference of its own for this to work. The tuple now
-   carries an optional `Func<IServiceProvider, object>?` field (6th element) for the
-   factory-delegate activation path — it's `null` for plain `(Type, Type, ServiceLifetime)`
-   registrations.
+   — registering its own services merged with every definition read from reachable referenced
+   assemblies (each exactly once, even across diamond dependency graphs) as direct
+   `services.Add{Lifetime}<...>()` calls. A referenced project with no MEDI reference of its own
+   simply publishes definitions that the host registers on its behalf. Classes with `[Inject]` members
+   **and** a user-defined constructor are activated through a generated factory delegate
+   (`sp => new T(...)`, resolving each member via the embedded `InjectServiceResolver`, keyed members
+   via `GetRequiredKeyedService`/`GetKeyedService`).
 4. Groups `[Inject]` members per class → emits one constructor per partial class. When the class
-   also has a user-defined constructor, the registration's factory field carries a delegate
+   requires explicit activation (user constructor, keyed member, or optional member), its published definition tells the host to emit a factory delegate
    (`sp => new T(InjectServiceResolver.GetRequired/GetOptional<...>(sp), ...)`) using only BCL
    types; when the class has `[Inject]` only and no user ctor, the standard
    `(Type, Type, ServiceLifetime)` descriptor is used (`Factory = null`).

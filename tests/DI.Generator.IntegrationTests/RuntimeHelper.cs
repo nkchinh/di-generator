@@ -17,7 +17,8 @@ internal static class RuntimeHelper
 
     private static readonly Lazy<ImmutableArray<MetadataReference>> LazyReferences = new(static () =>
     {
-        var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+        var paths = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string
+            ?? throw new InvalidOperationException("TRUSTED_PLATFORM_ASSEMBLIES is unavailable."))
             .Split(Path.PathSeparator)
             .Where(static p => !string.IsNullOrWhiteSpace(p))
             .Append(typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location)

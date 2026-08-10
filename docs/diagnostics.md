@@ -129,13 +129,13 @@ A class with `[Inject]` members and a user-defined constructor is activated thro
 **factory delegate** (rather than the default `ServiceDescriptor(Type, Type, ServiceLifetime)`).
 That delegate resolves each `[Inject]` parameter at runtime from the `IServiceProvider`. When a
 non-optional `[Inject]` member has a type the generator can't see registered as a service in the
-*current assembly*, it warns — if the service isn't registered at runtime either, the factory will
-throw `InvalidOperationException` at resolution time.
+*current assembly* — including registrations published by reachable referenced assemblies via
+`[assembly: ServiceDefinition]` — it warns: if the service isn't registered at runtime either, the
+factory will throw `InvalidOperationException` at resolution time.
 
-> The check is intentionally scoped to the current assembly to avoid false positives from services
-> registered in *referenced* assemblies. A member whose type is registered in another project (for
-> example a Domain service consumed by a Host-located class) is resolvable at runtime and is not
-> reported.
+> The check considers the current assembly's own services **plus** every service published by a
+> reachable referenced assembly. A member whose type is registered in another project (for example a
+> Domain service consumed by a Host-located class) is resolvable at runtime and is not reported.
 
 ```csharp
 public interface IMissingService { }   // not registered anywhere
@@ -155,51 +155,24 @@ public partial class OrderProcessor : IOrderProcessor
 
 - Register the missing type as a service (`[SingletonService<...>]` / `[ScopedService<...>]` /
   `[TransientService<...>]`) somewhere in the same assembly, or
-- Make the dependency **optional** by annotating the member as nullable (`T?`) or giving it a
-  default value (`= null` / `= default`). Optional members resolve via
-  `IServiceProvider.GetService` and tolerate a missing registration:
+- Make the dependency **optional** by annotating the member as nullable (`T?`). In a project with
+  nullable disabled, an initializer is accepted as the equivalent optional signal. Optional members
+  resolve via `IServiceProvider.GetService` and tolerate a missing registration:
 
   ```csharp
   [Inject] private readonly IMissingService? _missing;          // optional
-  [Inject] private readonly ILogger _logger = NullLogger.Instance; // optional (default value)
   ```
 
-- Or move the registration of the member's type into the current assembly so the generator can see
-  it (cross-assembly registrations are resolvable at runtime but invisible to this check).
+- Or register the missing type as a service (`[SingletonService<...>]` / `[ScopedService<...>]` /
+  `[TransientService<...>]`) somewhere in the current assembly, or have a referenced project provide
+  the registration (its published `ServiceDefinition`s are part of the check).
 
-This diagnostic only fires on the **factory-delegate path** (class has `[Inject]` members **and** a
-user-defined constructor **and** the class itself is registered as a service). Classes with only
-`[Inject]` members and no user constructor use the standard `ServiceDescriptor` and are activated by
-the container's own constructor-selection logic, so no warning applies.
+This diagnostic intentionally remains narrow: it only fires when the class has `[Inject]` members,
+a user-defined constructor, and is itself registered as a service. Keyed/optional members may also
+require factory activation, but do not broaden DIGEN011's warning scope.
 
-## DIGEN012
+### A note on `[Inject("key")]`
 
-**[Inject] keyed service requires MEDI reference** — Warning
-
-`[Inject("key")]` accepts an optional service key. Keyed-service resolution in .NET DI requires
-`IKeyedServiceProvider`, which is part of `Microsoft.Extensions.DependencyInjection` (MEDI) — a type
-that may not exist in the current project at all. Today the generator does **not** emit keyed lookup
-for `[Inject]` members; the key is used as a compile-time signal, and when the current project has
-**no reference to MEDI**, the generator reports `DIGEN012` to make sure the author knows the key will
-be ignored and the member resolved by type (`sp.GetService(typeof(T))`) at runtime.
-
-```csharp
-// Project has no PackageReference to Microsoft.Extensions.DependencyInjection.*
-
-public partial class GreetingService
-{
-    // DIGEN012: key 'primary' is ignored — resolved without a key at runtime.
-    [Inject("primary")] private readonly ILogger _logger;
-}
-```
-
-**Fix (one of):**
-
-- Remove the key from `[Inject]` if the key was only tentative, or
-- Keep the key as documentation of intent (the warning is informational; the member still compiles
-  and resolves by type), or
-- If you need **real** keyed resolution at runtime, resolve the keyed service explicitly (via
-  `IKeyedServiceProvider` / `[FromKeyedServices]`) rather than relying on `[Inject("key")]` for it,
-  or
-- Move the class into a project that references MEDI if you want the warning to disappear while
-  keeping the key (the resolution behavior is the same either way).
+A keyed `[Inject("key")]` member on a registered class is honored through a generated factory using
+`GetRequiredKeyedService`/`GetKeyedService`, even when the class has no user constructor. No
+diagnostic is reported for a key alone.

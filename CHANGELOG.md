@@ -8,27 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`[Inject("key")]` accepted** — `InjectAttribute` takes an optional key as a compile-time
-  signal. In a project with no reference to `Microsoft.Extensions.DependencyInjection` the key is
-  reported as `DIGEN012` and ignored at runtime (the member resolves by type). The generator does not
-  currently emit keyed lookup for `[Inject]` members.
-- **Optional `[Inject]` members** — a member annotated nullable (`T?`) or with a default value
-  (`= null` / `= default`) is resolved via `IServiceProvider.GetService` (returns `null` when the
-  service isn't registered) instead of the default `GetRequired<T>` (throws when missing).
+- **`[Inject("key")]` honored through generated factories** — `InjectAttribute` takes an optional
+  key. When the containing class is registered, the generated factory resolves the member with the
+  key via `GetRequiredKeyedService`/`GetKeyedService`, even without a user-defined constructor. A key
+  alone no longer produces a warning (`DIGEN012` removed).
+- **Optional `[Inject]` members** — in nullable-enabled projects, a member annotated `T?` resolves
+  via `IServiceProvider.GetService` (returns `null` when missing); in nullable-disabled projects an
+  initializer is accepted as the equivalent optional signal. Non-nullable members in nullable-aware
+  projects remain required even when initialized, so generated factories never violate their type contract.
 - **Factory-delegate activation** — when a class has `[Inject]` members **and** a user-defined
-  constructor, the registration now carries a factory delegate (`sp => new T(...)`) using only BCL
+  constructor, the registration uses a factory delegate (`sp => new T(...)`) using only BCL
   types (`System.IServiceProvider` + embedded `InjectServiceResolver`) so the container always
   activates the generated `[Inject]` constructor. The generated constructor is no longer decorated
   with `[ActivatorUtilitiesConstructor]`, and the class's own project does not need an MEDI
   reference for the factory to compile. Single-constructor classes keep the standard
   `(Type, Type, ServiceLifetime)` descriptor.
-- Registration tuple gained a 6th field, `Func<IServiceProvider, object>? Factory`, carrying the
-  factory delegate above (`null` otherwise). Framework-types-only, so `Collect{X}Services` remains
-  callable across MEDI-free project references.
-- Diagnostics `DIGEN011` (non-optional `[Inject]` member's type not registered in the current
-  assembly — factory-delegate path only; referenced-assembly registrations are resolvable at runtime
-  and not reported) and `DIGEN012` (`[Inject("key")]` in a project without an MEDI reference; the
-  key is ignored at runtime).
+- Keyed or optional `[Inject]` members now also require factory activation, because standard MEDI
+  constructor activation cannot apply their published key/optionality metadata.
+- Diagnostic `DIGEN011` (non-optional `[Inject]` member's type not registered in the current
+  assembly **or in any reachable referenced assembly's published `ServiceDefinition`s** —
+  factory-delegate path only).
+
+### Changed
+
+- **Published-definition cross-project model** — every project with services now emits one
+  `[assembly: DIGen.Generated.ServiceDefinition]` per service (implementation/service types,
+  resolved lifetime, key, hosted flag, `[Inject]` member metadata) regardless of any MEDI reference.
+  A MEDI-having host reads the definitions published by every reachable referenced assembly and
+  generates **direct** `services.Add{...}` calls for its own services plus the referenced ones in a
+  single `Add{Assembly}Services(this IServiceCollection)`. The `Collect{Assembly}Services` /
+  `Add{Assembly}AllServices` module-marker aggregation and the `MaterializeServices` runtime helper
+  are **removed**. Cross-assembly sharing is now a compile-time contract instead of a runtime
+  indirection layer; diamond dependency graphs stay safe because each referenced assembly's
+  definitions are consumed exactly once per host compilation. Consumers call
+  `Add{Assembly}Services()` (no separate aggregator method).
 
 ## [0.0.1] - 2026-07-06
 

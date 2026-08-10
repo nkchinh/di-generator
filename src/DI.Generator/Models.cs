@@ -17,7 +17,7 @@ internal readonly struct EquatableArray<T>(T[] array) : IEquatable<EquatableArra
 
     public int Count => _array?.Length ?? 0;
 
-    public T this[int index] => _array![index];
+    public T this[int index] => (_array ?? Array.Empty<T>())[index];
 
     public T[] ToArray() => _array ?? [];
 
@@ -111,6 +111,15 @@ internal sealed record ServiceInfo(
     bool IsAutoScope,
     string? LockedLifetime);
 
+/// <summary>A valid service registration after scope resolution; lifetime is guaranteed non-null.</summary>
+internal sealed record ResolvedServiceInfo(
+    string ImplementationFqn,
+    string? ServiceFqn,
+    string Lifetime,
+    string? Key,
+    bool IsHostedService,
+    LocationInfo? Location);
+
 /// <summary>Transform result for the service pipeline: either a registration or a diagnostic.</summary>
 internal sealed record ServiceResult(ServiceInfo? Service, DiagnosticInfo? Diagnostic);
 
@@ -151,8 +160,33 @@ internal sealed record InjectResult(
     string? GroupKey,
     DiagnosticInfo? Diagnostic);
 
-/// <summary>A referenced assembly's generated registration module, read from its assembly-level marker.</summary>
-internal readonly record struct ModuleInfo(string MethodName, string ExtensionsTypeName);
+/// <summary>
+/// A published service definition read from a referenced assembly's <c>[assembly: ServiceDefinition]</c>
+/// attributes (or built for the current assembly). Value data only (strings) so it flows through the
+/// incremental pipeline and caches by content; member arrays are index-aligned and in the exact
+/// order the derived class's generated constructor uses.
+/// </summary>
+internal sealed record ServiceDefinitionData(
+    string ServiceTypeFqn,
+    string ImplementationTypeFqn,
+    string Lifetime,
+    string? Key,
+    bool IsHostedService,
+    bool RequiresFactory,
+    EquatableArray<string> MemberNames,
+    EquatableArray<string> MemberTypeFqns,
+    EquatableArray<string> MemberKeys,
+    EquatableArray<bool> MemberOptionals);
+
+/// <summary>Combined input for the registration emitter (own services, name, scope locks, MEDI
+/// availability, [Inject] metadata and published definitions from referenced assemblies).</summary>
+internal sealed record RegistrationPipelineInput(
+    EquatableArray<ServiceResult> Services,
+    string AssemblyName,
+    ExternalScopeRules ExternalScopeRules,
+    bool HasServiceLifetime,
+    IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)> InjectMeta,
+    EquatableArray<ServiceDefinitionData> PublishedDefinitions);
 
 /// <summary>A locked lifetime for a type, read from an <c>[assembly: RequiredExternalScope]</c> declaration.</summary>
 internal readonly record struct ExternalScopeRule(string TypeFqn, string Lifetime);

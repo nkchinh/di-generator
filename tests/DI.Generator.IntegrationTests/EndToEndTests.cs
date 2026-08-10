@@ -18,6 +18,18 @@ public class EndToEndTests
         return services.BuildServiceProvider();
     }
 
+    private static Type GetRequiredType(Assembly assembly, string typeName)
+        => assembly.GetType(typeName)
+            ?? throw new InvalidOperationException($"Type '{typeName}' not found in generated assembly.");
+
+    private static MethodInfo GetRequiredMethod(Type type, string methodName)
+        => type.GetMethod(methodName)
+            ?? throw new InvalidOperationException($"Method '{methodName}' not found on '{type.FullName}'.");
+
+    private static PropertyInfo GetRequiredProperty(Type type, string propertyName)
+        => type.GetProperty(propertyName)
+            ?? throw new InvalidOperationException($"Property '{propertyName}' not found on '{type.FullName}'.");
+
     [Fact]
     public void BasicRegistrations_ResolveWithCorrectLifetimes()
     {
@@ -45,13 +57,13 @@ public class EndToEndTests
             "Microsoft.Extensions.DependencyInjection.BasicAppServiceCollectionExtensions",
             "AddBasicAppServices");
 
-        var greeterType = assembly.GetType("Demo.IGreeter")!;
+        var greeterType = GetRequiredType(assembly, "Demo.IGreeter");
         var first = provider.GetRequiredService(greeterType);
         var second = provider.GetRequiredService(greeterType);
         Assert.Same(first, second);
-        Assert.Equal("hello", greeterType.GetMethod("Greet")!.Invoke(first, null));
+        Assert.Equal("hello", GetRequiredMethod(greeterType, "Greet").Invoke(first, null));
 
-        var bufferType = assembly.GetType("Demo.Buffer")!;
+        var bufferType = GetRequiredType(assembly, "Demo.Buffer");
         Assert.NotSame(provider.GetRequiredService(bufferType), provider.GetRequiredService(bufferType));
     }
 
@@ -79,11 +91,11 @@ public class EndToEndTests
             "Microsoft.Extensions.DependencyInjection.KeyedAppServiceCollectionExtensions",
             "AddKeyedAppServices");
 
-        var gatewayType = assembly.GetType("Demo.IGateway")!;
+        var gatewayType = GetRequiredType(assembly, "Demo.IGateway");
         var stripe = provider.GetRequiredKeyedService(gatewayType, "stripe");
         var paypal = provider.GetRequiredKeyedService(gatewayType, "paypal");
-        Assert.Equal("stripe", gatewayType.GetProperty("Name")!.GetValue(stripe));
-        Assert.Equal("paypal", gatewayType.GetProperty("Name")!.GetValue(paypal));
+        Assert.Equal("stripe", GetRequiredProperty(gatewayType, "Name").GetValue(stripe));
+        Assert.Equal("paypal", GetRequiredProperty(gatewayType, "Name").GetValue(paypal));
     }
 
     [Fact]
@@ -151,9 +163,9 @@ public class EndToEndTests
             "Microsoft.Extensions.DependencyInjection.InjectAppServiceCollectionExtensions",
             "AddInjectAppServices");
 
-        var appType = assembly.GetType("Demo.IApp")!;
+        var appType = GetRequiredType(assembly, "Demo.IApp");
         var app = provider.GetRequiredService(appType);
-        Assert.Equal("hello from greeter", appType.GetMethod("Run")!.Invoke(app, null));
+        Assert.Equal("hello from greeter", GetRequiredMethod(appType, "Run").Invoke(app, null));
     }
 
     [Fact]
@@ -175,10 +187,20 @@ public class EndToEndTests
             public partial class Consumer
             {
                 [Inject] private readonly IGreeter _greeter;
+                private readonly bool _usedDefaultConstructor = false;
 
-                public Consumer() { _greeter = null!; }
+                public Consumer()
+                {
+                    _greeter = new DefaultGreeter();
+                    _usedDefaultConstructor = true;
+                }
 
-                public string Describe() => _greeter is null ? "default ctor" : _greeter.Greet();
+                public string Describe() => _usedDefaultConstructor ? "default ctor" : _greeter.Greet();
+
+                private sealed class DefaultGreeter : IGreeter
+                {
+                    public string Greet() => "default ctor";
+                }
             }
             """,
             assemblyName: "CtorPickApp");
@@ -189,7 +211,7 @@ public class EndToEndTests
             "Microsoft.Extensions.DependencyInjection.CtorPickAppServiceCollectionExtensions",
             "AddCtorPickAppServices");
 
-        var consumerType = assembly.GetType("Demo.Consumer")!;
+        var consumerType = GetRequiredType(assembly, "Demo.Consumer");
         var generatedCtor = consumerType.GetConstructors()
             .Single(static c => c.GetParameters().Length == 1);
 
@@ -203,7 +225,7 @@ public class EndToEndTests
         // resolvable constructor by default, which here is the generated one (1 parameter). Verify
         // the runtime outcome instead of the absent attribute.
         var consumer = ActivatorUtilities.CreateInstance(provider, consumerType);
-        Assert.Equal("injected", consumerType.GetMethod("Describe")!.Invoke(consumer, null));
+        Assert.Equal("injected", GetRequiredMethod(consumerType, "Describe").Invoke(consumer, null));
     }
 
     [Fact]
@@ -232,12 +254,22 @@ public class EndToEndTests
             public partial class Consumer : IConsumer
             {
                 [Inject] private readonly IGreeter _greeter;
+                private readonly bool _usedDefaultConstructor = false;
 
                 // User-defined parameterless constructor — the generator must emit a factory
                 // delegate rather than relying on MEDI's ActivatorUtilities constructor discovery.
-                public Consumer() { _greeter = null!; }
+                public Consumer()
+                {
+                    _greeter = new DefaultGreeter();
+                    _usedDefaultConstructor = true;
+                }
 
-                public string Describe() => _greeter is null ? "default ctor" : _greeter.Greet();
+                public string Describe() => _usedDefaultConstructor ? "default ctor" : _greeter.Greet();
+
+                private sealed class DefaultGreeter : IGreeter
+                {
+                    public string Greet() => "default ctor";
+                }
             }
             """,
             assemblyName: "FactoryApp");
@@ -248,13 +280,13 @@ public class EndToEndTests
             "Microsoft.Extensions.DependencyInjection.FactoryAppServiceCollectionExtensions",
             "AddFactoryAppServices");
 
-        var consumerType = assembly.GetType("Demo.IConsumer")!;
+        var consumerType = GetRequiredType(assembly, "Demo.IConsumer");
         var consumer = provider.GetRequiredService(consumerType);
-        Assert.Equal("from factory delegate", consumerType.GetMethod("Describe")!.Invoke(consumer, null));
+        Assert.Equal("from factory delegate", GetRequiredMethod(consumerType, "Describe").Invoke(consumer, null));
     }
 
     [Fact]
-    public void MultiProject_AggregatorChainsLibraryAndHostServices()
+    public void MultiProject_HostMergesLibraryAndOwnServices()
     {
         var libImage = RuntimeHelper.CompileWithGenerator("""
             using DIGen;
@@ -294,12 +326,12 @@ public class EndToEndTests
         using var provider = BuildProvider(
             hostAssembly,
             "Microsoft.Extensions.DependencyInjection.IntegrationHostServiceCollectionExtensions",
-            "AddIntegrationHostAllServices");
+            "AddIntegrationHostServices");
 
-        var useCaseType = hostAssembly.GetType("HostApp.IUseCase")!;
+        var useCaseType = GetRequiredType(hostAssembly, "HostApp.IUseCase");
         using var scope = provider.CreateScope();
         var useCase = scope.ServiceProvider.GetRequiredService(useCaseType);
-        Assert.Equal("handled by library", useCaseType.GetMethod("Execute")!.Invoke(useCase, null));
+        Assert.Equal("handled by library", GetRequiredMethod(useCaseType, "Execute").Invoke(useCase, null));
     }
 
     [Fact]
@@ -350,7 +382,7 @@ public class EndToEndTests
 
         // IOrderRepository lives in the Domain assembly; resolve it through the impl type's
         // interfaces so it shares type identity with whatever the generated code registered.
-        var repositoryType = assembly.GetType("Infra.SqlOrderRepository")!
+        var repositoryType = GetRequiredType(assembly, "Infra.SqlOrderRepository")
             .GetInterfaces().Single(static t => t.Name == "IOrderRepository");
         using (var scopeA = provider.CreateScope())
         {
@@ -363,7 +395,7 @@ public class EndToEndTests
             Assert.NotSame(first, third); // different scope → different instance (Scoped, not Singleton)
         }
 
-        var connectionType = assembly.GetType("ThirdParty.IConnection")!;
+        var connectionType = GetRequiredType(assembly, "ThirdParty.IConnection");
         Assert.Same( // Singleton, per the RequiredExternalScope lock
             provider.GetRequiredService(connectionType),
             provider.GetRequiredService(connectionType));

@@ -9,8 +9,8 @@ public interface IOrderProcessor
 }
 
 /// <summary>
-/// Demonstrates [Inject]: the generator creates one constructor assigning both members,
-/// decorated with [ActivatorUtilitiesConstructor].
+/// Demonstrates required [Inject]: the generator creates one constructor assigning both members.
+/// Because this class has no user constructor, MEDI activates that generated constructor directly.
 /// </summary>
 [TransientService<IOrderProcessor>]
 public partial class OrderProcessor : IOrderProcessor

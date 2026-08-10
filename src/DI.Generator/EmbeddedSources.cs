@@ -106,9 +106,9 @@ internal static class EmbeddedSources
 
             /// <summary>
             /// Marks an instance field or property for constructor injection. All [Inject] members of a
-            /// partial class are grouped into a single generated constructor.
-            /// When the project has no reference to Microsoft.Extensions.DependencyInjection,
-            /// a keyed service warning (DIGEN012) is reported and the key is ignored.
+            /// partial class are grouped into a single generated constructor. When the member carries a
+            /// key (e.g. <c>[Inject("email")]</c>), the key is honored by the factory delegate a
+            /// referencing host project generates against Microsoft.Extensions.DependencyInjection.
             /// </summary>
             [global::System.CodeDom.Compiler.GeneratedCode("{{GeneratorInfo.Name}}", "{{GeneratorInfo.Version}}")]
             [global::System.AttributeUsage(global::System.AttributeTargets.Field | global::System.AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
@@ -216,25 +216,69 @@ internal static class EmbeddedSources
         namespace DIGen.Generated
         {
             /// <summary>
-            /// Assembly-level marker describing this assembly's generated registration module.
-            /// Referencing projects use it to generate an aggregator that chains all modules.
-            /// Infrastructure attribute — do not apply manually.
+            /// Assembly-level definition of one registered service and its [Inject] members, published
+            /// by the owning assembly at compile time. A project that references this assembly and can
+            /// resolve Microsoft.Extensions.DependencyInjection reads these definitions and generates
+            /// direct <c>Add{...}Services</c> registrations from them — no re-derivation, no scan of
+            /// class metadata. Infrastructure attribute — do not apply manually.
             /// </summary>
             [global::System.CodeDom.Compiler.GeneratedCode("{{GeneratorInfo.Name}}", "{{GeneratorInfo.Version}}")]
             [global::System.AttributeUsage(global::System.AttributeTargets.Assembly, AllowMultiple = true, Inherited = false)]
-            internal sealed class ServiceRegistrationModuleAttribute : global::System.Attribute
+            internal sealed class ServiceDefinitionAttribute : global::System.Attribute
             {
-                public ServiceRegistrationModuleAttribute(string methodName, string extensionsTypeName)
+                public ServiceDefinitionAttribute(
+                    global::System.Type implementationType,
+                    global::System.Type serviceType,
+                    int lifetime,
+                    string? key,
+                    bool isHostedService,
+                    bool requiresFactory,
+                    string[] memberNames,
+                    global::System.Type[] memberTypes,
+                    string[] memberKeys,
+                    bool[] memberOptionals)
                 {
-                    MethodName = methodName;
-                    ExtensionsTypeName = extensionsTypeName;
+                    ImplementationType = implementationType;
+                    ServiceType = serviceType;
+                    Lifetime = lifetime;
+                    Key = key;
+                    IsHostedService = isHostedService;
+                    RequiresFactory = requiresFactory;
+                    MemberNames = memberNames;
+                    MemberTypes = memberTypes;
+                    MemberKeys = memberKeys;
+                    MemberOptionals = memberOptionals;
                 }
 
-                /// <summary>Name of the generated extension method, e.g. AddMyCompanyInfrastructureServices.</summary>
-                public string MethodName { get; }
+                /// <summary>The class implementing the service.</summary>
+                public global::System.Type ImplementationType { get; }
 
-                /// <summary>Fully qualified name (without global::) of the static class declaring the method.</summary>
-                public string ExtensionsTypeName { get; }
+                /// <summary>The registered service type; equals <see cref="ImplementationType"/> for self-registration.</summary>
+                public global::System.Type ServiceType { get; }
+
+                /// <summary><c>DiServiceScope</c> value already resolved against scope-locking rules by the owner.</summary>
+                public int Lifetime { get; }
+
+                /// <summary>Service key, or null when not registered as keyed.</summary>
+                public string? Key { get; }
+
+                /// <summary>Whether the implementation should be registered as an <c>IHostedService</c>.</summary>
+                public bool IsHostedService { get; }
+
+                /// <summary>Whether registration requires a generated factory for constructor selection, keyed injection, or optional injection.</summary>
+                public bool RequiresFactory { get; }
+
+                /// <summary>Names of the [Inject] members, in generated-constructor order.</summary>
+                public string[] MemberNames { get; }
+
+                /// <summary>Types of the [Inject] members, index-aligned with <see cref="MemberNames"/>.</summary>
+                public global::System.Type[] MemberTypes { get; }
+
+                /// <summary>Key of each [Inject] member ("" = none), index-aligned with <see cref="MemberNames"/>.</summary>
+                public string[] MemberKeys { get; }
+
+                /// <summary>Optionality of each [Inject] member, index-aligned with <see cref="MemberNames"/>.</summary>
+                public bool[] MemberOptionals { get; }
             }
         }
         #endif
@@ -266,56 +310,6 @@ internal static class EmbeddedSources
                     DiServiceScope.Transient => global::Microsoft.Extensions.DependencyInjection.ServiceLifetime.Transient,
                     _ => throw new global::System.ArgumentOutOfRangeException(nameof(lifetime)),
                 };
-            }
-
-            /// <summary>
-            /// Applies registration tuples collected by Collect{Assembly}Services methods — possibly from
-            /// projects with no reference to Microsoft.Extensions.DependencyInjection — to a real
-            /// IServiceCollection. The tuple shape (Type, Type, int, string?, bool, Func{IServiceProvider, object}?)
-            /// uses only framework types so it is identical across every assembly, unlike a project-embedded
-            /// class or enum would be.
-            /// </summary>
-            [global::System.CodeDom.Compiler.GeneratedCode("{{GeneratorInfo.Name}}", "{{GeneratorInfo.Version}}")]
-            internal static class ServiceRegistrationExtensions
-            {
-                public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection MaterializeServices(
-                    this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services,
-                    global::System.Collections.Generic.IEnumerable<(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, global::System.Func<global::System.IServiceProvider, object>? Factory)> registrations)
-                {
-                    foreach (var registration in registrations)
-                    {
-                        if (registration.IsHostedService)
-                        {
-                            global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddEnumerable(
-                                services,
-                                global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor.Singleton(
-                                    registration.ServiceType, registration.ImplementationType));
-                            continue;
-                        }
-
-                        var lifetime = ((DiServiceScope)registration.Lifetime).ToServiceLifetime();
-
-                        if (registration.Factory is not null)
-                        {
-                            services.Add(registration.Key is null
-                                ? new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                                    registration.ServiceType, registration.Factory, lifetime)
-                                : new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                                    registration.ServiceType, registration.Key,
-                                    (sp, key) => registration.Factory(sp), lifetime));
-                        }
-                        else
-                        {
-                            services.Add(registration.Key is null
-                                ? new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                                    registration.ServiceType, registration.ImplementationType, lifetime)
-                                : new global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor(
-                                    registration.ServiceType, registration.Key, registration.ImplementationType, lifetime));
-                        }
-                    }
-
-                    return services;
-                }
             }
         }
         #endif

@@ -17,7 +17,7 @@ public class ServiceRegistrationTests
         Assert.Contains("internal sealed class ScopedServiceAttribute", attributes);
         Assert.Contains("internal sealed class TransientServiceAttribute", attributes);
         Assert.Contains("internal sealed class InjectAttribute", attributes);
-        Assert.Contains("class ServiceRegistrationModuleAttribute", attributes);
+        Assert.Contains("class ServiceDefinitionAttribute", attributes);
         Assert.Contains("#if !DIGEN_EXCLUDE_ATTRIBUTES", attributes);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -35,13 +35,8 @@ public class ServiceRegistrationTests
             """);
 
         var source = outcome.GetSource(Hint);
-        Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Demo.MemoryCache), typeof(global::Demo.MemoryCache), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, false, null));",
-            source);
+        Assert.Contains("services.AddSingleton<global::Demo.MemoryCache>();", source);
         Assert.Contains("public static class TestAssemblyServiceCollectionExtensions", source);
-        Assert.Contains("CollectTestAssemblyServices(", source);
         Assert.Contains("AddTestAssemblyServices(", source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -62,9 +57,7 @@ public class ServiceRegistrationTests
 
         var source = outcome.GetSource(Hint);
         Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Demo.IOrderRepository), typeof(global::Demo.OrderRepository), " +
-            "(int)global::DIGen.DiServiceScope.Scoped, null, false, null));",
+            "services.AddScoped<global::Demo.IOrderRepository, global::Demo.OrderRepository>();",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -85,9 +78,7 @@ public class ServiceRegistrationTests
 
         var source = outcome.GetSource(Hint);
         Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Demo.NotificationChannel), typeof(global::Demo.EmailChannel), " +
-            "(int)global::DIGen.DiServiceScope.Transient, null, false, null));",
+            "services.AddTransient<global::Demo.NotificationChannel, global::Demo.EmailChannel>();",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -111,14 +102,10 @@ public class ServiceRegistrationTests
 
         var source = outcome.GetSource(Hint);
         Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Demo.IPaymentGateway), typeof(global::Demo.StripeGateway), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, \"stripe\", false, null));",
+            "services.AddKeyedSingleton<global::Demo.IPaymentGateway, global::Demo.StripeGateway>(\"stripe\");",
             source);
         Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Demo.ScratchBuffer), typeof(global::Demo.ScratchBuffer), " +
-            "(int)global::DIGen.DiServiceScope.Transient, \"mem\", false, null));",
+            "services.AddKeyedTransient<global::Demo.ScratchBuffer>(\"mem\");",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -143,9 +130,9 @@ public class ServiceRegistrationTests
 
         var source = outcome.GetSource(Hint);
         Assert.Contains(
-            "registrations.Add((" +
-            "typeof(global::Microsoft.Extensions.Hosting.IHostedService), typeof(global::Demo.Worker), " +
-            "(int)global::DIGen.DiServiceScope.Singleton, null, true, null));",
+            "TryAddEnumerable(services, " +
+            "global::Microsoft.Extensions.DependencyInjection.ServiceDescriptor." +
+            "Singleton<global::Microsoft.Extensions.Hosting.IHostedService, global::Demo.Worker>());",
             source);
         Assert.Empty(outcome.CompilationErrors);
     }
@@ -170,7 +157,7 @@ public class ServiceRegistrationTests
     }
 
     [Fact]
-    public void ModuleMarker_IsEmittedForOwnServices()
+    public void ServiceDefinition_IsPublishedForOwnServices()
     {
         var outcome = GeneratorTestHelper.Run("""
             using DIGen;
@@ -181,12 +168,12 @@ public class ServiceRegistrationTests
             public class Clock { }
             """);
 
-        var source = outcome.GetSource(Hint);
+        var source = outcome.GetSource("ServiceDefinitions.g.cs");
         Assert.Contains(
-            "[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute(" +
-            "\"CollectTestAssemblyServices\", " +
-            "\"Microsoft.Extensions.DependencyInjection.TestAssemblyServiceCollectionExtensions\")]",
+            "[assembly: global::DIGen.Generated.ServiceDefinition(",
             source);
+        Assert.Contains("typeof(global::Demo.Clock)", source);
+        Assert.Contains("(int)global::DIGen.DiServiceScope.Singleton", source);
         Assert.Empty(outcome.CompilationErrors);
     }
 

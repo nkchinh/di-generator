@@ -7,25 +7,20 @@ namespace NkChinh.DI.Generator;
 
 internal static class Emitters
 {
-    private const string ServiceCollectionFqn = "global::Microsoft.Extensions.DependencyInjection.IServiceCollection";
-    public const string RegistrationsHintName = "ServiceCollectionExtensions.g.cs";
-
     // --- Registrations -------------------------------------------------------
 
-    // Framework-types-only tuple: identical across every assembly, unlike a project-embedded class or enum,
-    // so passing it as a Collect{Assembly}Services parameter works safely across project references.
-    private const string DescriptorTupleFqn =
-        "(global::System.Type ServiceType, global::System.Type ImplementationType, int Lifetime, string? Key, bool IsHostedService, global::System.Func<global::System.IServiceProvider, object>? Factory)";
-    private const string DescriptorListFqn = "global::System.Collections.Generic.ICollection<" + DescriptorTupleFqn + ">";
+    private const string ServiceCollectionFqn = "global::Microsoft.Extensions.DependencyInjection.IServiceCollection";
+    public const string RegistrationsHintName = "ServiceCollectionExtensions.g.cs";
+    public const string ServiceDefinitionsHintName = "ServiceDefinitions.g.cs";
 
     public static void EmitRegistrations(
         SourceProductionContext context,
         EquatableArray<ServiceResult> results,
         string assemblyName,
-        EquatableArray<ModuleInfo> modules,
         ExternalScopeRules externalScopeRules,
         bool hasMedi,
-        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta)
+        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta,
+        EquatableArray<ServiceDefinitionData> publishedDefinitions)
     {
         ReportDiagnostics(context, results.Select(static r => r.Diagnostic));
         ReportDiagnostics(context, externalScopeRules.Diagnostics.Select(static d => (DiagnosticInfo?)d));
@@ -34,113 +29,224 @@ internal static class Emitters
             static r => r.TypeFqn, static r => r.Lifetime, StringComparer.Ordinal);
 
         var services = ResolveValidServices(context, results, externalScopeByType);
-        EmitInjectDiagnostics(context, services, injectMeta, hasMedi);
-        var hasOwnServices = services.Count > 0;
-        var hasModules = modules.Count > 0;
-        if (!hasOwnServices && !(hasModules && hasMedi))
-        {
-            return;
-        }
+        var ownDefinitions = BuildOwnDefinitions(services, injectMeta);
+
+        // Each project validates its own [Inject] members: the registered pool is made of its own
+        // services plus every service published by a reachable referencing assembly.
+        ReportResolvabilityDiagnostics(context, services, injectMeta, publishedDefinitions);
 
         var identifier = NameHelper.SanitizeAssemblyIdentifier(assemblyName);
-        var className = identifier + "ServiceCollectionExtensions";
-        var collectMethodName = "Collect" + identifier + "Services";
-        var addMethodName = "Add" + identifier + "Services";
-        var aggregatorName = "Add" + identifier + "AllServices";
-
-        var builder = new StringBuilder();
-        AppendFileHeader(builder);
+        var hasOwnServices = ownDefinitions.Count > 0;
 
         if (hasOwnServices)
         {
-            builder.AppendLine(
-                "[assembly: global::DIGen.Generated.ServiceRegistrationModuleAttribute(" +
-                $"\"{collectMethodName}\", \"Microsoft.Extensions.DependencyInjection.{className}\")]");
+            EmitServiceDefinitions(context, ownDefinitions);
+        }
+
+        if (hasMedi && (hasOwnServices || publishedDefinitions.Count > 0))
+        {
+            EmitAddMethod(context, ownDefinitions, publishedDefinitions, identifier);
+        }
+    }
+
+    private static List<ServiceDefinitionData> BuildOwnDefinitions(
+        List<ResolvedServiceInfo> services,
+        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta)
+    {
+        var definitions = new List<ServiceDefinitionData>(services.Count);
+        foreach (var service in services)
+        {
+            var serviceType = service.ServiceFqn ?? service.ImplementationFqn;
+            EquatableArray<string> names = EquatableArray<string>.Empty;
+            EquatableArray<string> types = EquatableArray<string>.Empty;
+            EquatableArray<string> keys = EquatableArray<string>.Empty;
+            EquatableArray<bool> optionals = EquatableArray<bool>.Empty;
+            var requiresFactory = false;
+
+            if (injectMeta is not null &&
+                injectMeta.TryGetValue(service.ImplementationFqn, out var meta) &&
+                meta.Members.Count > 0)
+            {
+                // Members must be published in the same order the generated constructor uses.
+                var members = meta.Members
+                    .OrderBy(static m => m.FilePath, StringComparer.Ordinal)
+                    .ThenBy(static m => m.SpanStart)
+                    .ToArray();
+                names = new EquatableArray<string>(members.Select(static m => m.MemberName).ToArray());
+                types = new EquatableArray<string>(members.Select(static m => NonNullable(m.TypeFqn)).ToArray());
+                keys = new EquatableArray<string>(members.Select(static m => m.Key ?? string.Empty).ToArray());
+                optionals = new EquatableArray<bool>(members.Select(static m => m.IsOptional).ToArray());
+                requiresFactory = meta.HasUserCtor || members.Any(static m => m.Key is not null || m.IsOptional);
+            }
+
+            definitions.Add(new ServiceDefinitionData(
+                serviceType,
+                service.ImplementationFqn,
+                service.Lifetime,
+                service.Key,
+                service.IsHostedService,
+                requiresFactory,
+                names,
+                types,
+                keys,
+                optionals));
+        }
+
+        return definitions;
+    }
+
+    /// <summary>Publishes this assembly's service definitions as assembly-level attributes that a
+    /// referencing MEDI host can consume. Works without any MEDI reference.</summary>
+    private static void EmitServiceDefinitions(SourceProductionContext context, List<ServiceDefinitionData> definitions)
+    {
+        var builder = new StringBuilder();
+        AppendFileHeader(builder);
+        builder.AppendLine();
+
+        foreach (var d in definitions)
+        {
+            builder.AppendLine("[assembly: global::DIGen.Generated.ServiceDefinition(");
+            builder.AppendLine($"    typeof({d.ImplementationTypeFqn}),");
+            builder.AppendLine($"    typeof({d.ServiceTypeFqn}),");
+            builder.AppendLine($"    (int)global::DIGen.DiServiceScope.{d.Lifetime},");
+            builder.AppendLine($"    {FormatKey(d.Key)},");
+            builder.AppendLine($"    {(d.IsHostedService ? "true" : "false")},");
+            builder.AppendLine($"    {(d.RequiresFactory ? "true" : "false")},");
+            builder.AppendLine($"    new string[] {{ {string.Join(", ", d.MemberNames.Select(static n => SymbolDisplay.FormatLiteral(n, quote: true)))} }},");
+            builder.AppendLine($"    new global::System.Type[] {{ {string.Join(", ", d.MemberTypeFqns.Select(static t => "typeof(" + t + ")"))} }},");
+            builder.AppendLine($"    new string[] {{ {string.Join(", ", d.MemberKeys.Select(static k => k.Length == 0 ? "\"\"" : SymbolDisplay.FormatLiteral(k, quote: true)))} }},");
+            builder.AppendLine($"    new bool[] {{ {string.Join(", ", d.MemberOptionals.Select(static o => o ? "true" : "false"))} }})]");
             builder.AppendLine();
         }
 
+        context.AddSource(ServiceDefinitionsHintName, SourceText.From(builder.ToString(), Encoding.UTF8));
+    }
+
+    private static void EmitAddMethod(
+        SourceProductionContext context,
+        List<ServiceDefinitionData> ownDefinitions,
+        EquatableArray<ServiceDefinitionData> publishedDefinitions,
+        string identifier)
+    {
+        var className = identifier + "ServiceCollectionExtensions";
+        var addMethodName = "Add" + identifier + "Services";
+
+        var all = ownDefinitions
+            .Concat(publishedDefinitions)
+            .OrderBy(static d => d.ImplementationTypeFqn, StringComparer.Ordinal)
+            .ThenBy(static d => d.ServiceTypeFqn, StringComparer.Ordinal)
+            .ThenBy(static d => d.Key, StringComparer.Ordinal)
+            .ToList();
+
+        var builder = new StringBuilder();
+        AppendFileHeader(builder);
+        builder.AppendLine();
         builder.AppendLine("namespace Microsoft.Extensions.DependencyInjection");
         builder.AppendLine("{");
         builder.AppendLine("    /// <summary>");
-        builder.AppendLine($"    /// Dependency-injection registrations generated for assembly '{assemblyName}'.");
+        builder.AppendLine($"    /// Dependency-injection registrations generated for assembly '{identifier}'");
+        builder.AppendLine("    /// from its own services and the services published by referenced projects.");
         builder.AppendLine("    /// </summary>");
         builder.AppendLine($"    [global::System.CodeDom.Compiler.GeneratedCode(\"{GeneratorInfo.Name}\", \"{GeneratorInfo.Version}\")]");
         builder.AppendLine($"    public static class {className}");
         builder.AppendLine("    {");
-
-        if (hasOwnServices)
+        builder.AppendLine($"        public static {ServiceCollectionFqn} {addMethodName}(this {ServiceCollectionFqn} services)");
+        builder.AppendLine("        {");
+        foreach (var d in all)
         {
-            builder.AppendLine("        /// <summary>");
-            builder.AppendLine($"        /// Collects all services declared with DIGen attributes in assembly '{assemblyName}' as plain");
-            builder.AppendLine("        /// data, requiring no reference to Microsoft.Extensions.DependencyInjection.");
-            builder.AppendLine("        /// </summary>");
-            builder.AppendLine($"        public static void {collectMethodName}({DescriptorListFqn} registrations)");
-            builder.AppendLine("        {");
-            foreach (var service in services)
-            {
-                builder.AppendLine("            " + FormatDescriptor(context, service, injectMeta));
-            }
-
-            builder.AppendLine("        }");
-
-            if (hasMedi)
-            {
-                builder.AppendLine();
-                builder.AppendLine("        /// <summary>");
-                builder.AppendLine($"        /// Registers all services declared with DIGen attributes in assembly '{assemblyName}'.");
-                builder.AppendLine("        /// </summary>");
-                builder.AppendLine($"        public static {ServiceCollectionFqn} {addMethodName}(this {ServiceCollectionFqn} services)");
-                builder.AppendLine("        {");
-                builder.AppendLine($"            var registrations = new global::System.Collections.Generic.List<{DescriptorTupleFqn}>();");
-                builder.AppendLine($"            {collectMethodName}(registrations);");
-                builder.AppendLine("            return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);");
-                builder.AppendLine("        }");
-            }
+            builder.AppendLine("            " + FormatRegistration(d));
         }
 
-        if (hasMedi && hasModules)
-        {
-            if (hasOwnServices)
-            {
-                builder.AppendLine();
-            }
-
-            builder.AppendLine("        /// <summary>");
-            builder.AppendLine("        /// Registers services from every referenced project generated by NkChinh.DI.Generator,");
-            builder.AppendLine($"        /// followed by the services of assembly '{assemblyName}' itself.");
-            builder.AppendLine("        /// </summary>");
-            builder.AppendLine($"        public static {ServiceCollectionFqn} {aggregatorName}(this {ServiceCollectionFqn} services)");
-            builder.AppendLine("        {");
-            builder.AppendLine($"            var registrations = new global::System.Collections.Generic.List<{DescriptorTupleFqn}>();");
-            foreach (var module in modules)
-            {
-                builder.AppendLine($"            global::{module.ExtensionsTypeName}.{module.MethodName}(registrations);");
-            }
-
-            if (hasOwnServices)
-            {
-                builder.AppendLine($"            {collectMethodName}(registrations);");
-            }
-
-            builder.AppendLine("            return global::DIGen.ServiceRegistrationExtensions.MaterializeServices(services, registrations);");
-            builder.AppendLine("        }");
-        }
-
+        builder.AppendLine("            return services;");
+        builder.AppendLine("        }");
         builder.AppendLine("    }");
         builder.AppendLine("}");
 
         context.AddSource(RegistrationsHintName, SourceText.From(builder.ToString(), Encoding.UTF8));
     }
 
-    private static List<ServiceInfo> ResolveValidServices(
+    private static string FormatRegistration(ServiceDefinitionData d)
+    {
+        var lifetime = d.Lifetime;
+        var hostNamespace = "global::Microsoft.Extensions.DependencyInjection";
+
+        if (d.IsHostedService)
+        {
+            var hostedServiceType = "global::Microsoft.Extensions.Hosting.IHostedService";
+            var descriptor = d.RequiresFactory
+                ? $"{hostNamespace}.ServiceDescriptor.Singleton<{hostedServiceType}>(sp => new {d.ImplementationTypeFqn}({FormatFactoryArgs(d)}))"
+                : $"{hostNamespace}.ServiceDescriptor.Singleton<{hostedServiceType}, {d.ImplementationTypeFqn}>()";
+            return $"{hostNamespace}.Extensions.ServiceCollectionDescriptorExtensions.TryAddEnumerable(services, {descriptor});";
+        }
+
+        var keyLiteral = FormatKey(d.Key);
+        var isSelf = d.ServiceTypeFqn == d.ImplementationTypeFqn;
+
+        if (d.RequiresFactory)
+        {
+            var factoryArgs = FormatFactoryArgs(d);
+            if (d.Key is null)
+            {
+                return $"services.Add{lifetime}<{d.ServiceTypeFqn}>(sp => new {d.ImplementationTypeFqn}({factoryArgs}));";
+            }
+
+            return $"services.AddKeyed{lifetime}<{d.ServiceTypeFqn}>({keyLiteral}, (sp, key) => new {d.ImplementationTypeFqn}({factoryArgs}));";
+        }
+
+        if (d.Key is null)
+        {
+            return isSelf
+                ? $"services.Add{lifetime}<{d.ImplementationTypeFqn}>();"
+                : $"services.Add{lifetime}<{d.ServiceTypeFqn}, {d.ImplementationTypeFqn}>();";
+        }
+
+        return isSelf
+            ? $"services.AddKeyed{lifetime}<{d.ImplementationTypeFqn}>({keyLiteral});"
+            : $"services.AddKeyed{lifetime}<{d.ServiceTypeFqn}, {d.ImplementationTypeFqn}>({keyLiteral});";
+    }
+
+    private static string FormatFactoryArgs(ServiceDefinitionData d)
+    {
+        var args = new List<string>(d.MemberNames.Count);
+        for (var i = 0; i < d.MemberNames.Count; i++)
+        {
+            var type = d.MemberTypeFqns[i];
+            var key = d.MemberKeys[i];
+            var isOptional = d.MemberOptionals[i];
+
+            if (key.Length == 0)
+            {
+                args.Add(isOptional
+                    ? $"global::DIGen.InjectServiceResolver.GetOptional<{type}>(sp)"
+                    : $"global::DIGen.InjectServiceResolver.GetRequired<{type}>(sp)");
+            }
+            else
+            {
+                var keyLiteral = SymbolDisplay.FormatLiteral(key, quote: true);
+                args.Add(isOptional
+                    ? $"global::Microsoft.Extensions.DependencyInjection.ServiceProviderKeyedServiceExtensions.GetKeyedService<{type}>(sp, {keyLiteral})"
+                    : $"global::Microsoft.Extensions.DependencyInjection.ServiceProviderKeyedServiceExtensions.GetRequiredKeyedService<{type}>(sp, {keyLiteral})");
+            }
+        }
+
+        return string.Join(", ", args);
+    }
+
+    private static string FormatKey(string? key)
+        => key is null ? "null" : SymbolDisplay.FormatLiteral(key, quote: true);
+
+    private static string NonNullable(string fqn)
+        => fqn.EndsWith("?", StringComparison.Ordinal) ? fqn.Substring(0, fqn.Length - 1) : fqn;
+
+    private static List<ResolvedServiceInfo> ResolveValidServices(
         SourceProductionContext context,
         EquatableArray<ServiceResult> results,
         IReadOnlyDictionary<string, string> externalScopeByType)
     {
-        var valid = new List<ServiceInfo>();
+        var valid = new List<ResolvedServiceInfo>();
         var scopeResolved = ResolveLockedScopes(
             context,
-            results.Where(static r => r.Service is not null).Select(static r => r.Service!),
+            results.Select(static r => r.Service).OfType<ServiceInfo>(),
             externalScopeByType);
         var groups = scopeResolved.GroupBy(static s => s.ImplementationFqn, StringComparer.Ordinal);
 
@@ -175,17 +281,21 @@ internal static class Emitters
         return valid;
     }
 
-    private static List<ServiceInfo> ResolveLockedScopes(
+    private static List<ResolvedServiceInfo> ResolveLockedScopes(
         SourceProductionContext context,
         IEnumerable<ServiceInfo> services,
         IReadOnlyDictionary<string, string> externalScopeByType)
     {
-        var resolved = new List<ServiceInfo>();
+        var resolved = new List<ResolvedServiceInfo>();
         foreach (var service in services)
         {
             if (service.ServiceFqn is null)
             {
-                resolved.Add(service);
+                if (service.Lifetime is { } selfLifetime)
+                {
+                    resolved.Add(ToResolved(service, selfLifetime));
+                }
+
                 continue;
             }
 
@@ -205,11 +315,11 @@ internal static class Emitters
                     continue;
                 }
 
-                resolved.Add(service with { Lifetime = locked });
+                resolved.Add(ToResolved(service, locked));
                 continue;
             }
 
-            if (locked is not null && locked != service.Lifetime)
+            if (locked is not null && service.Lifetime is { } declaredLifetime && locked != declaredLifetime)
             {
                 context.ReportDiagnostic(
                     DiagnosticInfo.Create(
@@ -217,73 +327,28 @@ internal static class Emitters
                         service.Location,
                         TrimGlobalPrefix(service.ImplementationFqn),
                         TrimGlobalPrefix(service.ServiceFqn),
-                        service.Lifetime!,
+                        declaredLifetime,
                         locked).ToDiagnostic());
                 continue;
             }
 
-            resolved.Add(service);
+            if (service.Lifetime is { } lifetime)
+            {
+                resolved.Add(ToResolved(service, lifetime));
+            }
         }
 
         return resolved;
     }
 
-    private static string FormatDescriptor(
-        SourceProductionContext context,
-        ServiceInfo service,
-        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta)
-    {
-        var target = service.ServiceFqn ?? service.ImplementationFqn;
-        var lifetime = $"(int)global::DIGen.DiServiceScope.{service.Lifetime}";
-        var keyArg = service.Key is null ? "null" : SymbolDisplay.FormatLiteral(service.Key, quote: true);
-
-        if (service.IsHostedService)
-        {
-            return $"registrations.Add((typeof(global::Microsoft.Extensions.Hosting.IHostedService), typeof({service.ImplementationFqn}), {lifetime}, null, true, null));";
-        }
-
-        // Check if this service has [Inject] members + user constructors → needs factory
-        if (injectMeta is not null &&
-            injectMeta.TryGetValue(service.ImplementationFqn, out var meta) &&
-            meta.HasUserCtor &&
-            meta.Members.Count > 0)
-        {
-            return FormatFactoryDescriptor(target, service.ImplementationFqn, lifetime, keyArg, meta.Members);
-        }
-
-        return $"registrations.Add((typeof({target}), typeof({service.ImplementationFqn}), {lifetime}, {keyArg}, false, null));";
-    }
-
-    private static string FormatFactoryDescriptor(
-        string targetFqn,
-        string implFqn,
-        string lifetime,
-        string keyArg,
-        EquatableArray<InjectMemberInfo> members)
-    {
-        var paramArgs = new List<string>();
-        for (var i = 0; i < members.Count; i++)
-        {
-            var m = members[i];
-            if (m.IsOptional)
-            {
-                paramArgs.Add($"global::DIGen.InjectServiceResolver.GetOptional<{m.TypeFqn}>(sp)");
-            }
-            else
-            {
-                paramArgs.Add($"global::DIGen.InjectServiceResolver.GetRequired<{m.TypeFqn}>(sp)");
-            }
-        }
-
-        var factoryBody = $"sp => new {implFqn}({string.Join(", ", paramArgs)})";
-
-        // Pad the factory lambda nicely when it's long
-        var factoryArg = factoryBody.Length > 80
-            ? factoryBody
-            : factoryBody;
-
-        return $"registrations.Add((typeof({targetFqn}), typeof({implFqn}), {lifetime}, {keyArg}, false, {factoryArg}));";
-    }
+    private static ResolvedServiceInfo ToResolved(ServiceInfo service, string lifetime)
+        => new(
+            service.ImplementationFqn,
+            service.ServiceFqn,
+            lifetime,
+            service.Key,
+            service.IsHostedService,
+            service.Location);
 
     // --- [Inject] constructors -----------------------------------------------
 
@@ -297,13 +362,13 @@ internal static class Emitters
         var failedGroups = new HashSet<string>(
             results
                 .Where(static r => r.Diagnostic is { Descriptor.DefaultSeverity: DiagnosticSeverity.Error } &&
-                                   r.GroupKey is not null)
-                .Select(static r => r.GroupKey!),
+                                    r.GroupKey is not null)
+                .Select(static r => r.GroupKey)
+                .OfType<string>(),
             StringComparer.Ordinal);
 
-        var groups = results
-            .Where(static r => r.Shell is not null && r.Member is not null)
-            .GroupBy(static r => r.Shell!.GroupKey, StringComparer.Ordinal)
+        var groups = GetValidInjectResults(results)
+            .GroupBy(static r => r.Shell.GroupKey, StringComparer.Ordinal)
             .OrderBy(static g => g.Key, StringComparer.Ordinal);
 
         foreach (var group in groups)
@@ -313,15 +378,27 @@ internal static class Emitters
                 continue;
             }
 
-            var shell = group.First().Shell!;
+            var shell = group.First().Shell;
             var members = group
-                .Select(static r => r.Member!)
+                .Select(static r => r.Member)
                 .Distinct()
                 .OrderBy(static m => m.FilePath, StringComparer.Ordinal)
                 .ThenBy(static m => m.SpanStart)
                 .ToList();
 
             context.AddSource(shell.HintName, SourceText.From(EmitConstructor(shell, members), Encoding.UTF8));
+        }
+    }
+
+    private static IEnumerable<(InjectClassShell Shell, InjectMemberInfo Member)> GetValidInjectResults(
+        IEnumerable<InjectResult> results)
+    {
+        foreach (var result in results)
+        {
+            if (result.Shell is { } shell && result.Member is { } member)
+            {
+                yield return (shell, member);
+            }
         }
     }
 
@@ -422,11 +499,14 @@ internal static class Emitters
         }
     }
 
-    private static void EmitInjectDiagnostics(
+    // DIGEN011: each project validates its own [Inject] members. The "registered" pool is this
+    // assembly's own services plus every service published by a reachable referencing assembly, so
+    // a member backed by a service registered in a project you already reference is not flagged.
+    private static void ReportResolvabilityDiagnostics(
         SourceProductionContext context,
-        List<ServiceInfo> services,
+        List<ResolvedServiceInfo> services,
         IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta,
-        bool hasMedi)
+        EquatableArray<ServiceDefinitionData> publishedDefinitions)
     {
         if (injectMeta is null || injectMeta.Count == 0)
         {
@@ -437,6 +517,12 @@ internal static class Emitters
         foreach (var s in services)
         {
             registered.Add(s.ServiceFqn ?? s.ImplementationFqn);
+        }
+
+        foreach (var d in publishedDefinitions)
+        {
+            registered.Add(d.ServiceTypeFqn);
+            registered.Add(d.ImplementationTypeFqn);
         }
 
         var registeredImpls = new HashSet<string>(
@@ -451,21 +537,9 @@ internal static class Emitters
 
             foreach (var m in entry.Value.Members)
             {
-                // DIGEN012: keyed [Inject] in a project without MEDI
-                if (m.Key is not null && !hasMedi)
-                {
-                    context.ReportDiagnostic(
-                        DiagnosticInfo.Create(
-                            DiagnosticDescriptors.InjectKeyedWithoutMedi,
-                            m.Location,
-                            trimmedClass,
-                            m.MemberName,
-                            m.Key).ToDiagnostic());
-                }
-
-                // DIGEN011: non-optional [Inject] member whose type is not registered
-                // Only when the class has a user constructor (factory delegate path used)
-                // AND the class itself is registered as a service in this assembly.
+                // Non-optional [Inject] member whose type is not registered anywhere reachable.
+                // Only when the class has a user constructor (factory delegate path used) and the
+                // class itself is registered as a service in this assembly.
                 if (hasUserCtor && !m.IsOptional &&
                     registeredImpls.Contains(classFqn) &&
                     !registered.Contains(m.TypeFqn))

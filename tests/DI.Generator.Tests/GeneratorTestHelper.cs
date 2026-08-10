@@ -11,7 +11,7 @@ internal static class GeneratorTestHelper
 
     private static readonly Lazy<ImmutableArray<MetadataReference>> LazyReferences = new(static () =>
     {
-        var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+        var paths = GetTrustedPlatformAssemblies()
             .Split(Path.PathSeparator)
             .Where(static p => !string.IsNullOrWhiteSpace(p))
             .Append(typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location)
@@ -36,7 +36,7 @@ internal static class GeneratorTestHelper
             typeof(Microsoft.Extensions.Hosting.IHostedService).Assembly.Location,
         };
 
-        var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+        var paths = GetTrustedPlatformAssemblies()
             .Split(Path.PathSeparator)
             .Where(static p => !string.IsNullOrWhiteSpace(p))
             .Where(p => !excludedPaths.Contains(p, StringComparer.OrdinalIgnoreCase))
@@ -51,11 +51,16 @@ internal static class GeneratorTestHelper
     /// generator works in projects that don't reference MEDI at all.</summary>
     public static ImmutableArray<MetadataReference> ReferencesWithoutMedi => LazyReferencesWithoutMedi.Value;
 
+    private static string GetTrustedPlatformAssemblies()
+        => AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string
+            ?? throw new InvalidOperationException("TRUSTED_PLATFORM_ASSEMBLIES is unavailable.");
+
     public static CSharpCompilation CreateCompilation(
         IEnumerable<string> sources,
         string assemblyName = "TestAssembly",
         IEnumerable<MetadataReference>? extraReferences = null,
-        ImmutableArray<MetadataReference>? baseReferences = null)
+        ImmutableArray<MetadataReference>? baseReferences = null,
+        NullableContextOptions nullableContextOptions = NullableContextOptions.Enable)
     {
         var trees = sources.Select((s, i) =>
             CSharpSyntaxTree.ParseText(s, ParseOptions, path: $"TestSource{i}.cs"));
@@ -67,23 +72,30 @@ internal static class GeneratorTestHelper
             extraReferences is null ? references : references.AddRange(extraReferences),
             new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
-                nullableContextOptions: NullableContextOptions.Enable));
+                nullableContextOptions: nullableContextOptions));
     }
 
     public static GeneratorRunOutcome Run(
         string source,
         string assemblyName = "TestAssembly",
         IEnumerable<MetadataReference>? extraReferences = null,
-        ImmutableArray<MetadataReference>? baseReferences = null)
-        => Run([source], assemblyName, extraReferences, baseReferences);
+        ImmutableArray<MetadataReference>? baseReferences = null,
+        NullableContextOptions nullableContextOptions = NullableContextOptions.Enable)
+        => Run([source], assemblyName, extraReferences, baseReferences, nullableContextOptions);
 
     public static GeneratorRunOutcome Run(
         IEnumerable<string> sources,
         string assemblyName = "TestAssembly",
         IEnumerable<MetadataReference>? extraReferences = null,
-        ImmutableArray<MetadataReference>? baseReferences = null)
+        ImmutableArray<MetadataReference>? baseReferences = null,
+        NullableContextOptions nullableContextOptions = NullableContextOptions.Enable)
     {
-        var compilation = CreateCompilation(sources, assemblyName, extraReferences, baseReferences);
+        var compilation = CreateCompilation(
+            sources,
+            assemblyName,
+            extraReferences,
+            baseReferences,
+            nullableContextOptions);
 
         GeneratorDriver driver = CSharpGeneratorDriver.Create(
             [new DependencyInjectionGenerator().AsSourceGenerator()],

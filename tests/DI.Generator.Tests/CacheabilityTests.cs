@@ -40,7 +40,7 @@ public class CacheabilityTests
         driver = driver.RunGenerators(updated);
 
         var result = driver.GetRunResult().Results.Single();
-        foreach (var stepName in new[] { "Services", "Injects", "ExternalScopeRules", "HasServiceLifetime" })
+        foreach (var stepName in new[] { "Services", "Injects", "ReferencesScan", "ExternalScopeRules", "HasServiceLifetime" })
         {
             Assert.True(result.TrackedSteps.ContainsKey(stepName), $"Missing tracked step '{stepName}'");
             var reasons = result.TrackedSteps[stepName]

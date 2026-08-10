@@ -8,12 +8,12 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
-    <ProjectReference Include="..\Sample.Domain\Sample.Domain.csproj" />
+    <!-- Sample.Domain is intentionally transitive: Host -> Infrastructure -> Domain. -->
     <ProjectReference Include="..\Sample.Infrastructure\Sample.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NkChinh.DI.Generator" Version="0.0.2">
+    <PackageReference Include="NkChinh.DI.Generator" Version="0.0.3">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
