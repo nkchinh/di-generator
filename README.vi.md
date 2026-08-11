@@ -13,17 +13,17 @@ thiết được sinh vào project của bạn dưới dạng `internal` lúc co
 - 🔧 **Sinh constructor từ `[Inject]`** — gắn lên field/property; mọi member `[Inject]` của một partial class được gom vào **duy nhất một** constructor, tham số đặt tên camelCase. Key tùy chọn (`[Inject("key")]`) yêu cầu dependency keyed; member nullable (`T?`) trở thành **optional** và nhận `null` khi service chưa đăng ký. Ở project tắt nullable, initializer được dùng làm tín hiệu optional tương đương. Generator sinh **factory delegate** khi cần chọn constructor, lookup keyed hoặc lookup optional — không cần `[ActivatorUtilitiesConstructor]`, không cần MEDI để compile class sở hữu.
 - 🔑 **Hỗ trợ `[Inject("key")]`** — class đã đăng ký service luôn được sinh factory dùng `GetRequiredKeyedService`/`GetKeyedService`, kể cả khi không có constructor người dùng.
 - 🛡️ **Lưới an toàn lúc biên dịch** — `DIGEN011` cảnh báo khi một `[Inject]` non-optional có type không được đăng ký trong assembly hiện tại hoặc trong `ServiceDefinition` do assembly được tham chiếu publish (chỉ luồng factory delegate); đăng ký ở assembly được tham chiếu vẫn resolve được lúc chạy và *không* bị báo.
-- 🧩 **Multi-project** — project nào có service đều publish attribute `[assembly: ServiceDefinition]` (không cần tham chiếu MEDI); method `Add{TênAssembly}Services()` của host đăng ký service của chính nó cộng với mọi service do các project tham chiếu publish, mỗi cái đúng một lần (an toàn với diamond dependency).
+- 🧩 **Multi-project** — project nào có service đều publish attribute `[assembly: ServiceDefinition]`. Project có MEDI sinh `Add{TênAssembly}OwnedServices()` để đăng ký service của chính assembly đó, kể cả type `internal`; method `Add{TênAssembly}Services()` là entry point gốc, compose các module MEDI và đăng ký trực tiếp service từ project không có MEDI đúng một lần (an toàn với diamond dependency).
 - 🧬 **Chạy được ở project hoàn toàn không tham chiếu MEDI** — project Domain/Application chỉ khai báo interface và tự đăng ký qua `[Service<T>]`/attribute lifetime vẫn compile sạch dù không có bất kỳ dependency nào tới `Microsoft.Extensions.DependencyInjection`; các method dựa trên `IServiceCollection` chỉ xuất hiện ở project nào thực sự tham chiếu MEDI.
 - 🔒 **Required Scope Validation** — khóa lifetime của một interface đúng một lần bằng `[RequiredScope]` (hoặc `[assembly: RequiredExternalScope]` cho type bên thứ ba); `[Service<T>]` tự động suy ra lifetime đã khóa, còn attribute lifetime tường minh nào trái với khóa sẽ là lỗi biên dịch — hết lo lỗi captive dependency (vd `DbContext` Scoped bị đăng ký nhầm thành Singleton).
-- 🚨 **Diagnostic chuẩn compiler** — dùng sai là báo lỗi biên dịch (`DIGEN001`–`DIGEN010`); cấu trúc hợp lệ nhưng có rủi ro hiện thành cảnh báo (`DIGEN011`), không bao giờ sinh code sai trong im lặng.
+- 🚨 **Diagnostic chuẩn compiler** — dùng sai là báo lỗi biên dịch (`DIGEN001`–`DIGEN010`); cấu trúc hợp lệ nhưng có rủi ro hiện thành cảnh báo (`DIGEN011`–`DIGEN013`), không bao giờ sinh code sai trong im lặng.
 - 📦 **Gói NuGet thuần analyzer** — chỉ chứa assembly analyzer, không có `lib/`, không thêm dependency runtime nào.
 - 🌱 **Thân thiện với trimming & Native AOT** — việc đăng ký service là các lệnh gọi `services.Add{Lifetime}<...>()` thuần được sinh sẵn lúc biên dịch, không dùng reflection để quét assembly lúc chạy, nên không có gì để trimmer phá vỡ và không có gì xung đột với Native AOT.
 
 ## Cài đặt
 
 ```xml
-<PackageReference Include="NkChinh.DI.Generator" Version="0.0.3" PrivateAssets="all" />
+<PackageReference Include="NkChinh.DI.Generator" Version="0.0.4" PrivateAssets="all" />
 ```
 
 Yêu cầu: .NET SDK 8+ (hỗ trợ project net8.0 và net10.0), C# 11+ cho generic attribute.
@@ -128,12 +128,18 @@ khi class không có constructor người dùng. Riêng việc có key không ba
 ### Multi-project
 
 Cài package vào **mọi** project có khai báo service. Project nào có service sẽ publish các attribute
-`[assembly: ServiceDefinition]` (không cần tham chiếu MEDI). Host gọi một lệnh duy nhất để đăng ký
-service của chính nó **cộng với** mọi service do các project được tham chiếu publish:
+`[assembly: ServiceDefinition]` (không cần tham chiếu MEDI). Project có MEDI sinh hai method: một method
+`OwnedServices()` chỉ đăng ký service của chính assembly, và một method `Services()` làm entry point
+gốc. Root method gọi `OwnedServices()` của các project MEDI được tham chiếu, rồi đăng ký trực tiếp
+union service từ các project không có MEDI:
 
 ```csharp
-builder.Services.AddMyCompanyApiServices(); // đăng ký toàn bộ: host + mọi project tham chiếu
+builder.Services.AddMyCompanyApiServices(); // đăng ký toàn bộ graph đúng một lần
 ```
+
+Nhờ registration được compile trong assembly sở hữu, service `internal` của project MEDI vẫn dùng được
+mà không cần mở quyền truy cập cho Host. Chỉ gọi method `Services()` của project gốc; `OwnedServices()`
+là method phục vụ compose nội bộ giữa các project.
 
 Chi tiết: [docs/multi-project.md](docs/multi-project.md). Xem [samples](samples) cho solution
 3 project chạy được ngay.
@@ -175,8 +181,8 @@ viện đó — project sở hữu interface gốc không cần thêm dependency
 
 Xem bảng đầy đủ tại [docs/diagnostics.md](docs/diagnostics.md) hoặc [README.md](README.md#diagnostics).
 Tóm tắt: `DIGEN001`–`DIGEN010` là lỗi biên dịch (dùng sai attribute, disagree scope, …); `DIGEN011`
-là cảnh báo khi `[Inject]` non-optional có type không đăng ký trong assembly hiện tại hoặc trong các
-`ServiceDefinition` do assembly được tham chiếu publish.
+–`DIGEN013` là cảnh báo cho các trường hợp có thể hợp lệ nhưng cần chú ý, gồm `[Inject]` không
+optional không resolve được và service tham chiếu không accessible.
 
 ## Giấy phép
 
