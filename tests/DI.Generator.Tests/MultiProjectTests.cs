@@ -150,6 +150,60 @@ public class MultiProjectTests
     }
 
     [Fact]
+    public void RootRegistration_RegistersDependenciesBeforeOwnedServices()
+    {
+        var applicationRef = BuildLibraryReference("""
+            using DIGen;
+
+            namespace Manager.Application;
+
+            [SingletonService]
+            public class ApplicationService { }
+            """,
+            assemblyName: "Manager.Application");
+
+        var infrastructureRef = BuildLibraryReference("""
+            using DIGen;
+            using Manager.Application;
+
+            namespace Manager.Infrastructure;
+
+            [SingletonService]
+            public class InfrastructureService
+            {
+                public InfrastructureService(ApplicationService applicationService) { }
+            }
+            """,
+            assemblyName: "Manager.Infrastructure",
+            extraReferences: [applicationRef]);
+
+        var host = GeneratorTestHelper.Run("""
+            using DIGen;
+
+            namespace DeviceManager;
+
+            [SingletonService]
+            public class HostService { }
+            """,
+            assemblyName: "Device.Manager",
+            extraReferences: [applicationRef, infrastructureRef]);
+
+        var source = host.GetSource(Hint);
+        var application = source.IndexOf(
+            "ManagerApplicationServiceCollectionExtensions.AddManagerApplicationOwnedServices(services);",
+            StringComparison.Ordinal);
+        var infrastructure = source.IndexOf(
+            "ManagerInfrastructureServiceCollectionExtensions.AddManagerInfrastructureOwnedServices(services);",
+            StringComparison.Ordinal);
+        var owned = source.IndexOf("\n            AddDeviceManagerOwnedServices(services);", StringComparison.Ordinal);
+
+        Assert.True(application >= 0 && infrastructure >= 0 && owned >= 0 &&
+            application < infrastructure && infrastructure < owned,
+            $"Expected dependencies before owned services. Application={application}, Infrastructure={infrastructure}, Owned={owned}");
+        Assert.Empty(host.CompilationErrors);
+    }
+
+    [Fact]
     public void ProjectWithOwnServices_DoesNotEmplaceAggregator()
     {
         var outcome = GeneratorTestHelper.Run("""

@@ -23,7 +23,7 @@ thiết được sinh vào project của bạn dưới dạng `internal` lúc co
 ## Cài đặt
 
 ```xml
-<PackageReference Include="NkChinh.DI.Generator" Version="0.0.4" PrivateAssets="all" />
+<PackageReference Include="NkChinh.DI.Generator" Version="0.0.5" PrivateAssets="all" />
 ```
 
 Yêu cầu: .NET SDK 8+ (hỗ trợ project net8.0 và net10.0), C# 11+ cho generic attribute.

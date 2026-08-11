@@ -198,7 +198,6 @@ internal static class Emitters
         builder.AppendLine("        /// <summary>Registers this assembly's services and all reachable dependencies.</summary>");
         builder.AppendLine($"        public static {ServiceCollectionFqn} {addMethodName}(this {ServiceCollectionFqn} services)");
         builder.AppendLine("        {");
-        builder.AppendLine($"            {addOwnedMethodName}(services);");
         foreach (var moduleAssemblyName in moduleIdentifiers)
         {
             var moduleIdentifier = NameHelper.SanitizeAssemblyIdentifier(moduleAssemblyName);
@@ -216,6 +215,7 @@ internal static class Emitters
             builder.AppendLine("            " + FormatRegistration(d));
         }
 
+        builder.AppendLine($"            {addOwnedMethodName}(services);");
         builder.AppendLine("            return services;");
         builder.AppendLine("        }");
         builder.AppendLine("    }");

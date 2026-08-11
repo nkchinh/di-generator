@@ -12,7 +12,7 @@
 
   <PropertyGroup Label="Packaging">
     <PackageId>NkChinh.DI.Generator</PackageId>
-    <Version>0.0.4</Version>
+    <Version>0.0.5</Version>
     <Authors>NkChinh</Authors>
     <Description>Pure Roslyn source generator for Microsoft.Extensions.DependencyInjection: attribute-driven service registration ([SingletonService], [ScopedService&lt;T&gt;], ...), [Inject] constructor generation, and multi-project registration chaining. No runtime dependencies — everything is generated into your project at compile time.</Description>
     <PackageTags>dependency-injection;di;source-generator;roslyn;codegen;servicecollection</PackageTags>

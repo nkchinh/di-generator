@@ -62,6 +62,9 @@ Because the root collects MEDI-free definitions as one union, diamond dependency
 Shared`, `Host → B → Shared`) register `Shared` once, not once through each module path. Call only the
 root project's `Add{Assembly}Services()` method; `OwnedServices()` is generated for composition.
 
+Dependency modules and MEDI-free definitions are registered before the root assembly's owned services.
+This keeps the normal MEDI rule that a root registration is the final override for the same service.
+
 ## Naming rules
 
 `AssemblyName` is sanitized to a PascalCase identifier: split on non-alphanumeric characters,

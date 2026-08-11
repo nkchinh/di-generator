@@ -42,7 +42,7 @@ package needs is generated into your project as `internal` code at compile time.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.4" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.5" PrivateAssets="all" />
 </ItemGroup>
 ```
 
