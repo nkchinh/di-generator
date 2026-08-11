@@ -180,10 +180,11 @@ diagnostic is reported for a key alone.
 
 **Severity:** Warning
 
-`DIGEN012` warns when a registered service interface or implementation is not effectively
-`public`. The registration is valid inside its defining assembly, but a generated registration
-in another assembly may not compile. Make both types `public`, or grant the consuming assembly
-access with `InternalsVisibleTo`.
+`DIGEN012` warns when a MEDI-free project publishes a registered service interface or implementation
+that is not effectively `public`. A consuming root must emit that registration from another assembly,
+which may not compile. Make both types `public`, or grant the consuming assembly access with
+`InternalsVisibleTo`. Projects that reference MEDI register their own services and may safely use
+`internal` types.
 
 ## DIGEN013
 

@@ -54,7 +54,7 @@ public class DiagnosticTests
     }
 
     [Fact]
-    public void DIGEN012_Warns_WhenServiceOrImplementationIsNotPublic()
+    public void DIGEN012_DoesNotWarn_WhenMediModuleOwnsInternalService()
     {
         var outcome = GeneratorTestHelper.Run("""
             using DIGen;
@@ -67,12 +67,31 @@ public class DiagnosticTests
             internal class InternalService : IInternalService { }
             """);
 
-        var diagnostic = AssertSingle(outcome, "DIGEN012", DiagnosticSeverity.Warning);
-        Assert.Contains("IInternalService", diagnostic.GetMessage());
-        Assert.Contains("InternalService", diagnostic.GetMessage());
+        Assert.DoesNotContain(outcome.GeneratorDiagnostics, static d => d.Id == "DIGEN012");
         Assert.Contains(
             "services.AddSingleton<global::Demo.IInternalService, global::Demo.InternalService>();",
             outcome.GetSource("ServiceCollectionExtensions.g.cs"));
+    }
+
+    [Fact]
+    public void DIGEN012_Warns_WhenMediFreeProjectPublishesInternalService()
+    {
+        var outcome = GeneratorTestHelper.Run("""
+            using DIGen;
+
+            namespace Demo;
+
+            internal interface IInternalService { }
+
+            [SingletonService<IInternalService>]
+            internal class InternalService : IInternalService { }
+            """,
+            baseReferences: GeneratorTestHelper.ReferencesWithoutMedi);
+
+        var diagnostic = AssertSingle(outcome, "DIGEN012", DiagnosticSeverity.Warning);
+        Assert.Contains("IInternalService", diagnostic.GetMessage());
+        Assert.Contains("InternalService", diagnostic.GetMessage());
+        Assert.False(outcome.HasSource("ServiceCollectionExtensions.g.cs"));
     }
 
     [Fact]

@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composes reachable MEDI modules, and directly registers deduplicated MEDI-free definitions.
 - Root registration methods now register dependencies before their own services, so the root assembly
   retains MEDI's normal final-registration override behavior.
+- `DIGEN012` no longer warns for `internal` services owned by a MEDI project, because that project
+  now compiles its own registration method.
 - **Published-definition cross-project model** — every project with services now emits one
   `[assembly: DIGen.Generated.ServiceDefinition]` per service (implementation/service types,
   resolved lifetime, key, hosted flag, `[Inject]` member metadata) regardless of any MEDI reference.

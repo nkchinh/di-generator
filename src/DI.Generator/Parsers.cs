@@ -86,6 +86,8 @@ internal static class Parsers
 
         var publishedServiceType = serviceType ?? symbol;
         var diagnostic =
+            context.SemanticModel.Compilation.GetTypeByMetadataName(
+                "Microsoft.Extensions.DependencyInjection.ServiceLifetime") is null &&
             (!IsEffectivelyPublic(symbol) || !IsEffectivelyPublic(publishedServiceType))
             ? DiagnosticInfo.Create(
                 DiagnosticDescriptors.ServiceTypeNotPublic,
