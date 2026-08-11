@@ -20,12 +20,17 @@ internal static class Emitters
         ExternalScopeRules externalScopeRules,
         bool hasMedi,
         IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta,
-        EquatableArray<ServiceDefinitionData> publishedDefinitions)
+        ReferencedServices referencedServices)
     {
+        var publishedDefinitions = referencedServices.Definitions;
+        var moduleIdentifiers = referencedServices.RegistrationModuleIdentifiers;
+        bool IsModuleDefinition(ServiceDefinitionData definition) =>
+            moduleIdentifiers.Contains(definition.OwnerAssemblyName);
+
         ReportDiagnostics(context, results.Select(static r => r.Diagnostic));
         ReportDiagnostics(context, externalScopeRules.Diagnostics.Select(static d => (DiagnosticInfo?)d));
 
-        foreach (var definition in publishedDefinitions.Where(static d => !d.IsAccessibleToConsumer))
+        foreach (var definition in publishedDefinitions.Where(d => !IsModuleDefinition(d) && !d.IsAccessibleToConsumer))
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticDescriptors.ReferencedServiceNotAccessible,
@@ -35,13 +40,13 @@ internal static class Emitters
         }
 
         publishedDefinitions = new EquatableArray<ServiceDefinitionData>(
-            publishedDefinitions.Where(static d => d.IsAccessibleToConsumer).ToArray());
+            publishedDefinitions.Where(d => IsModuleDefinition(d) || d.IsAccessibleToConsumer).ToArray());
 
         var externalScopeByType = externalScopeRules.Rules.ToDictionary(
             static r => r.TypeFqn, static r => r.Lifetime, StringComparer.Ordinal);
 
         var services = ResolveValidServices(context, results, externalScopeByType);
-        var ownDefinitions = BuildOwnDefinitions(services, injectMeta);
+        var ownDefinitions = BuildOwnDefinitions(services, injectMeta, assemblyName);
 
         // Each project validates its own [Inject] members: the registered pool is made of its own
         // services plus every service published by a reachable referencing assembly.
@@ -52,18 +57,19 @@ internal static class Emitters
 
         if (hasOwnServices)
         {
-            EmitServiceDefinitions(context, ownDefinitions);
+            EmitServiceDefinitions(context, ownDefinitions, hasMedi, assemblyName);
         }
 
         if (hasMedi && (hasOwnServices || publishedDefinitions.Count > 0))
         {
-            EmitAddMethod(context, ownDefinitions, publishedDefinitions, identifier);
+            EmitAddMethods(context, ownDefinitions, publishedDefinitions, referencedServices.RegistrationModuleIdentifiers, identifier);
         }
     }
 
     private static List<ServiceDefinitionData> BuildOwnDefinitions(
         List<ResolvedServiceInfo> services,
-        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta)
+        IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)>? injectMeta,
+        string assemblyName)
     {
         var definitions = new List<ServiceDefinitionData>(services.Count);
         foreach (var service in services)
@@ -92,6 +98,7 @@ internal static class Emitters
             }
 
             definitions.Add(new ServiceDefinitionData(
+                assemblyName,
                 serviceType,
                 service.ImplementationFqn,
                 service.Lifetime,
@@ -110,11 +117,21 @@ internal static class Emitters
 
     /// <summary>Publishes this assembly's service definitions as assembly-level attributes that a
     /// referencing MEDI host can consume. Works without any MEDI reference.</summary>
-    private static void EmitServiceDefinitions(SourceProductionContext context, List<ServiceDefinitionData> definitions)
+    private static void EmitServiceDefinitions(
+        SourceProductionContext context,
+        List<ServiceDefinitionData> definitions,
+        bool hasMedi,
+        string assemblyName)
     {
         var builder = new StringBuilder();
         AppendFileHeader(builder);
         builder.AppendLine();
+
+        if (hasMedi)
+        {
+            builder.AppendLine($"[assembly: global::DIGen.Generated.RegistrationModule({SymbolDisplay.FormatLiteral(assemblyName, quote: true)})]");
+            builder.AppendLine();
+        }
 
         foreach (var d in definitions)
         {
@@ -132,20 +149,28 @@ internal static class Emitters
             builder.AppendLine();
         }
 
+        // Keep the generated file stable without an extra blank line after the last attribute.
+        builder.Length--;
+        if (builder[builder.Length - 1] == '\r')
+        {
+            builder.Length--;
+        }
+
         context.AddSource(ServiceDefinitionsHintName, SourceText.From(builder.ToString(), Encoding.UTF8));
     }
 
-    private static void EmitAddMethod(
+    private static void EmitAddMethods(
         SourceProductionContext context,
         List<ServiceDefinitionData> ownDefinitions,
         EquatableArray<ServiceDefinitionData> publishedDefinitions,
+        EquatableArray<string> moduleIdentifiers,
         string identifier)
     {
         var className = identifier + "ServiceCollectionExtensions";
         var addMethodName = "Add" + identifier + "Services";
+        var addOwnedMethodName = "Add" + identifier + "OwnedServices";
 
-        var all = ownDefinitions
-            .Concat(publishedDefinitions)
+        var owned = ownDefinitions
             .OrderBy(static d => d.ImplementationTypeFqn, StringComparer.Ordinal)
             .ThenBy(static d => d.ServiceTypeFqn, StringComparer.Ordinal)
             .ThenBy(static d => d.Key, StringComparer.Ordinal)
@@ -156,16 +181,37 @@ internal static class Emitters
         builder.AppendLine();
         builder.AppendLine("namespace Microsoft.Extensions.DependencyInjection");
         builder.AppendLine("{");
-        builder.AppendLine("    /// <summary>");
-        builder.AppendLine($"    /// Dependency-injection registrations generated for assembly '{identifier}'");
-        builder.AppendLine("    /// from its own services and the services published by referenced projects.");
-        builder.AppendLine("    /// </summary>");
         builder.AppendLine($"    [global::System.CodeDom.Compiler.GeneratedCode(\"{GeneratorInfo.Name}\", \"{GeneratorInfo.Version}\")]");
         builder.AppendLine($"    public static class {className}");
         builder.AppendLine("    {");
+        builder.AppendLine("        /// <summary>Registers services owned by this assembly.</summary>");
+        builder.AppendLine($"        public static {ServiceCollectionFqn} {addOwnedMethodName}(this {ServiceCollectionFqn} services)");
+        builder.AppendLine("        {");
+        foreach (var d in owned)
+        {
+            builder.AppendLine("            " + FormatRegistration(d));
+        }
+
+        builder.AppendLine("            return services;");
+        builder.AppendLine("        }");
+        builder.AppendLine();
+        builder.AppendLine("        /// <summary>Registers this assembly's services and all reachable dependencies.</summary>");
         builder.AppendLine($"        public static {ServiceCollectionFqn} {addMethodName}(this {ServiceCollectionFqn} services)");
         builder.AppendLine("        {");
-        foreach (var d in all)
+        builder.AppendLine($"            {addOwnedMethodName}(services);");
+        foreach (var moduleAssemblyName in moduleIdentifiers)
+        {
+            var moduleIdentifier = NameHelper.SanitizeAssemblyIdentifier(moduleAssemblyName);
+            builder.AppendLine($"            global::Microsoft.Extensions.DependencyInjection.{moduleIdentifier}ServiceCollectionExtensions.Add{moduleIdentifier}OwnedServices(services);");
+        }
+
+        var nonModuleDefinitions = publishedDefinitions
+            .Where(d => !moduleIdentifiers.Contains(d.OwnerAssemblyName))
+            .Distinct()
+            .OrderBy(static d => d.ImplementationTypeFqn, StringComparer.Ordinal)
+            .ThenBy(static d => d.ServiceTypeFqn, StringComparer.Ordinal)
+            .ThenBy(static d => d.Key, StringComparer.Ordinal);
+        foreach (var d in nonModuleDefinitions)
         {
             builder.AppendLine("            " + FormatRegistration(d));
         }

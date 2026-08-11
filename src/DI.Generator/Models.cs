@@ -167,6 +167,7 @@ internal sealed record InjectResult(
 /// order the derived class's generated constructor uses.
 /// </summary>
 internal sealed record ServiceDefinitionData(
+    string OwnerAssemblyName,
     string ServiceTypeFqn,
     string ImplementationTypeFqn,
     string Lifetime,
@@ -179,6 +180,11 @@ internal sealed record ServiceDefinitionData(
     EquatableArray<bool> MemberOptionals,
     bool IsAccessibleToConsumer);
 
+/// <summary>Published definitions and MEDI registration modules available to this compilation.</summary>
+internal sealed record ReferencedServices(
+    EquatableArray<ServiceDefinitionData> Definitions,
+    EquatableArray<string> RegistrationModuleIdentifiers);
+
 /// <summary>Combined input for the registration emitter (own services, name, scope locks, MEDI
 /// availability, [Inject] metadata and published definitions from referenced assemblies).</summary>
 internal sealed record RegistrationPipelineInput(
@@ -187,7 +193,7 @@ internal sealed record RegistrationPipelineInput(
     ExternalScopeRules ExternalScopeRules,
     bool HasServiceLifetime,
     IReadOnlyDictionary<string, (bool HasUserCtor, EquatableArray<InjectMemberInfo> Members)> InjectMeta,
-    EquatableArray<ServiceDefinitionData> PublishedDefinitions);
+    ReferencedServices ReferencedServices);
 
 /// <summary>A locked lifetime for a type, read from an <c>[assembly: RequiredExternalScope]</c> declaration.</summary>
 internal readonly record struct ExternalScopeRule(string TypeFqn, string Lifetime);

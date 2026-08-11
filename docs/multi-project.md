@@ -31,18 +31,18 @@ Every project that installs `NkChinh.DI.Generator` and declares at least one ser
    arrays thereof) — never another project-embedded type — so each assembly's published definitions
    are readable by any referencing compilation.
 
-2. **Only if the project resolves MEDI**, it emits a single
-   `Add{Assembly}Services(this IServiceCollection)` extension method that registers **its own
-   services together with every `ServiceDefinition` published by a reachable referenced assembly**,
-   in one pass:
+2. **Only if the project resolves MEDI**, it emits two extension methods:
+   `Add{Assembly}OwnedServices(this IServiceCollection)` registers only services owned by that
+   assembly, while `Add{Assembly}Services(this IServiceCollection)` is the root orchestration method:
 
    ```csharp
-   public static IServiceCollection AddMyCompanyApiServices(this IServiceCollection services)
-   {
-       // own services merged with definitions read from referenced assemblies,
-       // sorted by implementation type, registered directly:
-       services.AddScoped<global::MyCompany.Domain.IOrderRepository, global::MyCompany.Infrastructure.SqlOrderRepository>();
-       services.AddSingleton<global::MyCompany.Api.AppState>();
+    public static IServiceCollection AddMyCompanyApiServices(this IServiceCollection services)
+    {
+        AddMyCompanyApiOwnedServices(services);
+        MyCompanyInfrastructureServiceCollectionExtensions
+            .AddMyCompanyInfrastructureOwnedServices(services);
+        // MEDI-free definitions are emitted directly, once:
+        services.AddScoped<global::MyCompany.Domain.IOrderRepository, global::MyCompany.Infrastructure.SqlOrderRepository>();
        return services;
    }
    ```
@@ -51,15 +51,16 @@ Every project that installs `NkChinh.DI.Generator` and declares at least one ser
    `IServiceCollection`-based — the actual registration happens in whichever referencing MEDI-having
    project consumes the definitions.
 
-## Why each host registers referenced services itself
+## Why root methods compose owned modules
 
-The MEDI-free `ServiceDefinition` publication is the cross-project contract. A host that resolves
-MEDI reads the definitions published by every assembly in its reference closure — directly or
-transitively — and emits concrete `Add{...}` calls for them. Because the host collects the union of
-all reachable definitions once and sorts by implementation type, diamond dependency graphs
-(`Host → A → Shared`, `Host → B → Shared`, or `Host` referencing both) cannot register `Shared`
-twice: each referenced assembly's definitions are read exactly once per host compilation, and
-`Shared` needs no MEDI reference of its own to participate.
+The MEDI-free `ServiceDefinition` publication is the cross-project contract. A root method calls the
+owned registration method of every reachable MEDI module. Those calls are compiled inside the owning
+assembly, so a module may safely register `internal` services without granting the root assembly
+access. The root directly emits definitions only from assemblies without MEDI.
+
+Because the root collects MEDI-free definitions as one union, diamond dependency graphs (`Host → A →
+Shared`, `Host → B → Shared`) register `Shared` once, not once through each module path. Call only the
+root project's `Add{Assembly}Services()` method; `OwnedServices()` is generated for composition.
 
 ## Naming rules
 
@@ -92,8 +93,8 @@ over any `[assembly: RequiredExternalScope]` for the same type.
 
 - Install the package (or analyzer `ProjectReference`) in **every** project that declares
   services or uses `[Inject]` — analyzer references do not flow transitively.
-- The host calls `Add{Host}Services()` once; nothing else is needed. It registers services owned
-  by the host **and** every referenced project.
+- The root calls `Add{Root}Services()` once; nothing else is needed. It composes every MEDI module's
+  owned registrations and every MEDI-free referenced definition.
 - Transitive project references are included. For example, with
   `Host (MEDI) -> Infrastructure (no MEDI) -> Domain (no MEDI)`, Host does not need a direct
   reference to Domain for Domain's published service definitions to be registered.

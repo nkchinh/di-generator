@@ -6,18 +6,22 @@
 
 namespace Microsoft.Extensions.DependencyInjection
 {
-    /// <summary>
-    /// Dependency-injection registrations generated for assembly 'SnapshotAssembly'
-    /// from its own services and the services published by referenced projects.
-    /// </summary>
     [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
     public static class SnapshotAssemblyServiceCollectionExtensions
     {
-        public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddSnapshotAssemblyServices(this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+        /// <summary>Registers services owned by this assembly.</summary>
+        public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddSnapshotAssemblyOwnedServices(this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services)
         {
             services.AddScoped<global::Demo.IOrderRepository, global::Demo.OrderRepository>();
             services.AddTransient<global::Demo.ScratchBuffer>();
             services.AddKeyedSingleton<global::Demo.IPaymentGateway, global::Demo.StripeGateway>("stripe");
+            return services;
+        }
+
+        /// <summary>Registers this assembly's services and all reachable dependencies.</summary>
+        public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddSnapshotAssemblyServices(this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+        {
+            AddSnapshotAssemblyOwnedServices(services);
             return services;
         }
     }

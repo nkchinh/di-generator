@@ -198,6 +198,17 @@ namespace DIGen
 
 namespace DIGen.Generated
 {
+    /// <summary>Marks an assembly that emits an owned-service registration method.
+    /// Infrastructure attribute — do not apply manually.</summary>
+    [global::System.CodeDom.Compiler.GeneratedCode("NkChinh.DI.Generator", "0.0.0")]
+    [global::System.AttributeUsage(global::System.AttributeTargets.Assembly, AllowMultiple = false, Inherited = false)]
+    internal sealed class RegistrationModuleAttribute : global::System.Attribute
+    {
+        public RegistrationModuleAttribute(string identifier) => Identifier = identifier;
+
+        public string Identifier { get; }
+    }
+
     /// <summary>
     /// Assembly-level definition of one registered service and its [Inject] members, published
     /// by the owning assembly at compile time. A project that references this assembly and can

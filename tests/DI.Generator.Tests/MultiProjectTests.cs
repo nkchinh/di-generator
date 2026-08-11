@@ -7,9 +7,12 @@ public class MultiProjectTests
 {
     private const string Hint = "ServiceCollectionExtensions.g.cs";
 
-    private static MetadataReference BuildLibraryReference(string source, string assemblyName)
+    private static MetadataReference BuildLibraryReference(
+        string source,
+        string assemblyName,
+        IEnumerable<MetadataReference>? extraReferences = null)
     {
-        var outcome = GeneratorTestHelper.Run(source, assemblyName);
+        var outcome = GeneratorTestHelper.Run(source, assemblyName, extraReferences: extraReferences);
         Assert.Empty(outcome.CompilationErrors);
         return MetadataReference.CreateFromImage(GeneratorTestHelper.EmitAssembly(outcome.OutputCompilation));
     }
@@ -51,7 +54,7 @@ public class MultiProjectTests
         var source = host.GetSource(Hint);
         Assert.Contains("AddMyCompanyHostServices(", source);
         Assert.Contains(
-            "services.AddScoped<global::Infra.IRepo, global::Infra.Repo>();",
+            "MyCompanyInfrastructureServiceCollectionExtensions.AddMyCompanyInfrastructureOwnedServices(services);",
             source);
         Assert.Contains(
             "services.AddSingleton<global::HostApp.AppState>();",
@@ -80,8 +83,37 @@ public class MultiProjectTests
         var source = host.GetSource(Hint);
         Assert.Contains("AddCompanyHostServices(", source);
         Assert.Contains(
-            "services.AddSingleton<global::Infra.Clock>();",
+            "CompanyLibServiceCollectionExtensions.AddCompanyLibOwnedServices(services);",
             source);
+        Assert.Empty(host.CompilationErrors);
+    }
+
+    [Fact]
+    public void Host_DelegatesInternalServicesToTheirOwningMediModule()
+    {
+        var libraryRef = BuildLibraryReference("""
+            using DIGen;
+
+            namespace InternalLibrary;
+
+            internal interface IInternalService { }
+
+            [SingletonService<IInternalService>]
+            internal class InternalService : IInternalService { }
+            """,
+            assemblyName: "Internal.Library");
+
+        var host = GeneratorTestHelper.Run(
+            "namespace HostApp;",
+            assemblyName: "Internal.Host",
+            extraReferences: [libraryRef]);
+
+        var source = host.GetSource(Hint);
+        Assert.Contains(
+            "InternalLibraryServiceCollectionExtensions.AddInternalLibraryOwnedServices(services);",
+            source);
+        Assert.DoesNotContain("services.AddSingleton<global::InternalLibrary.IInternalService", source);
+        Assert.DoesNotContain(host.GeneratorDiagnostics, d => d.Id == "DIGEN013");
         Assert.Empty(host.CompilationErrors);
     }
 
@@ -109,9 +141,9 @@ public class MultiProjectTests
 
         var source = host.GetSource(Hint);
         var alpha = source.IndexOf(
-            "services.AddSingleton<global::A.A1>();", StringComparison.Ordinal);
+            "AlphaLibServiceCollectionExtensions.AddAlphaLibOwnedServices(services);", StringComparison.Ordinal);
         var beta = source.IndexOf(
-            "services.AddSingleton<global::B.B1>();", StringComparison.Ordinal);
+            "BetaLibServiceCollectionExtensions.AddBetaLibOwnedServices(services);", StringComparison.Ordinal);
         Assert.True(alpha >= 0 && beta >= 0 && alpha < beta,
             $"Expected A1 before B1. A1={alpha}, B1={beta}");
         Assert.Empty(host.CompilationErrors);
@@ -221,23 +253,29 @@ public class MultiProjectTests
 
         var aRef = BuildLibraryReference("""
             using DIGen;
+            using Shared;
 
             namespace A;
 
             [SingletonService]
             public class AThing { }
+            public class AUsesShared { public SharedRepo? Value { get; set; } }
             """,
-            assemblyName: "A.Lib");
+            assemblyName: "A.Lib",
+            extraReferences: [sharedRef]);
 
         var bRef = BuildLibraryReference("""
             using DIGen;
+            using Shared;
 
             namespace B;
 
             [SingletonService]
             public class BThing { }
+            public class BUsesShared { public SharedRepo? Value { get; set; } }
             """,
-            assemblyName: "B.Lib");
+            assemblyName: "B.Lib",
+            extraReferences: [sharedRef]);
 
         var host = GeneratorTestHelper.Run(
             "namespace HostApp;",
@@ -245,6 +283,8 @@ public class MultiProjectTests
             extraReferences: [sharedRef, aRef, bRef]);
 
         var source = host.GetSource(Hint);
+        Assert.Contains("ALibServiceCollectionExtensions.AddALibOwnedServices(services);", source);
+        Assert.Contains("BLibServiceCollectionExtensions.AddBLibOwnedServices(services);", source);
         var occurrences = System.Text.RegularExpressions.Regex.Matches(
             source, "AddScoped<global::Shared.ISharedRepo, global::Shared.SharedRepo>").Count;
         Assert.Equal(1, occurrences);

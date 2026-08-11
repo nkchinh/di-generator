@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Owned-module multi-project registration** — MEDI projects now emit
+  `Add{Assembly}OwnedServices()` for registrations compiled in their owning assembly, allowing
+  `internal` services to participate safely. `Add{Assembly}Services()` remains the root entry point,
+  composes reachable MEDI modules, and directly registers deduplicated MEDI-free definitions.
 - **Published-definition cross-project model** — every project with services now emits one
   `[assembly: DIGen.Generated.ServiceDefinition]` per service (implementation/service types,
   resolved lifetime, key, hosted flag, `[Inject]` member metadata) regardless of any MEDI reference.

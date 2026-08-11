@@ -103,7 +103,7 @@ public sealed class DependencyInjectionGenerator : IIncrementalGenerator
                 input.ExternalScopeRules,
                 input.HasServiceLifetime,
                 input.InjectMeta,
-                input.PublishedDefinitions));
+                input.ReferencedServices));
     }
 
     private static IncrementalValueProvider<EquatableArray<ServiceResult>> CollectServices(

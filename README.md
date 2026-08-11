@@ -21,8 +21,8 @@ package needs is generated into your project as `internal` code at compile time.
   isn't visibly registered in the current assembly or in any referenced project's published
   definitions (factory-delegate path only).
 - 🧩 **Multi-project aware** — every project with services publishes assembly-level `ServiceDefinition`
-  attributes (no MEDI reference needed); the host's `Add{Assembly}Services()` registers its own plus
-  every referenced project's services exactly once.
+  attributes. MEDI projects register their own services inside their assembly, including `internal`
+  types; a root `Add{Assembly}Services()` call composes every reachable module and MEDI-free project.
 - 🧬 **Works in projects with no MEDI reference at all** — a Domain/Application project that only declares interfaces and self-registers via `[Service<T>]`/lifetime attributes compiles cleanly with zero dependency on `Microsoft.Extensions.DependencyInjection`; the `IServiceCollection`-based methods appear only where a project actually references MEDI.
 - 🔒 **Required Scope Validation** — lock an interface's lifetime once with `[RequiredScope]` (or `[assembly: RequiredExternalScope]` for third-party types); `[Service<T>]` then resolves it automatically, and any explicit lifetime attribute that disagrees is a compile error — no more accidental captive dependencies (e.g. a `Scoped` `DbContext` registered as `Singleton`).
 - 🚨 **First-class diagnostics** — misuse is a compile error (`DIGEN001`–`DIGEN010`), and risky-but-valid constructions surface as warnings (`DIGEN011`), never silently wrong code.
@@ -42,7 +42,7 @@ package needs is generated into your project as `internal` code at compile time.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.3" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.4" PrivateAssets="all" />
 </ItemGroup>
 ```
 
@@ -165,8 +165,10 @@ every service published by referenced projects:
 | `MyCompany.Infrastructure` | publishes definitions, `AddMyCompanyInfrastructureServices()` |
 | `MyCompany.Api` (host) | `AddMyCompanyApiServices()` — own + referenced, exactly once |
 
-The host reads the union of all reachable definitions once (deduplicated — safe for diamond
-dependency graphs), so one call registers everything across the whole graph:
+Each MEDI project emits `Add{Assembly}OwnedServices()` for its own services and an
+`Add{Assembly}Services()` root entry point. The root composes owned-module methods and directly
+registers the union of MEDI-free definitions once (safe for diamond dependency graphs), so one call
+registers everything across the whole graph:
 
 ```csharp
 builder.Services.AddMyCompanyApiServices(); // one call registers everything
@@ -269,11 +271,10 @@ The package is an analyzer-only NuGet (`analyzers/dotnet/cs/`). At compile time 
    assembly — **no reference to MEDI required for this step**. A `ServiceDefinition` carries only
    framework-typed data (implementation/service types, lifetime, key, hosted flag, `[Inject]` member
    metadata), so it is portable across project references.
-3. **Only if your project resolves MEDI**, additionally emits `Add{Assembly}Services(this IServiceCollection)`
-   — registering its own services merged with every definition read from reachable referenced
-   assemblies (each exactly once, even across diamond dependency graphs) as direct
-   `services.Add{Lifetime}<...>()` calls. A referenced project with no MEDI reference of its own
-   simply publishes definitions that the host registers on its behalf. Classes with `[Inject]` members
+3. **Only if your project resolves MEDI**, additionally emits `Add{Assembly}OwnedServices(this IServiceCollection)`
+   for services owned by that assembly and `Add{Assembly}Services(this IServiceCollection)` as a root
+   entry point. The root calls each reachable MEDI module's owned method, so those modules can register
+   `internal` service types, then directly registers definitions from MEDI-free assemblies once. Classes with `[Inject]` members
    **and** a user-defined constructor are activated through a generated factory delegate
    (`sp => new T(...)`, resolving each member via the embedded `InjectServiceResolver`, keyed members
    via `GetRequiredKeyedService`/`GetKeyedService`).

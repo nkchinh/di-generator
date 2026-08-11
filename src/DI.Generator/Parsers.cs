@@ -338,31 +338,47 @@ internal static class Parsers
     /// published service type names is additionally used as the cross-assembly "registered" pool when
     /// validating <c>[Inject]</c> members (DIGEN011).
     /// </summary>
-    public static EquatableArray<ServiceDefinitionData> ReadReferencedServiceDefinitions(Compilation compilation)
+    public static ReferencedServices ReadReferencedServiceDefinitions(Compilation compilation)
     {
         var definitions = new List<ServiceDefinitionData>();
+        var moduleIdentifiers = new List<string>();
         foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols)
         {
             foreach (var attribute in assembly.GetAttributes())
             {
+                if (attribute.AttributeClass is { Name: "RegistrationModuleAttribute" } moduleAttribute &&
+                    moduleAttribute.ContainingNamespace.ToDisplayString() == "DIGen.Generated" &&
+                    attribute.ConstructorArguments.Length == 1 &&
+                    attribute.ConstructorArguments[0].Value is string identifier)
+                {
+                    moduleIdentifiers.Add(identifier);
+                }
+
                 if (attribute.AttributeClass is { Name: "ServiceDefinitionAttribute" } attributeClass &&
                     attributeClass.ContainingNamespace.ToDisplayString() == "DIGen.Generated" &&
-                    ReadServiceDefinition(attribute, compilation) is { } definition)
+                    ReadServiceDefinition(attribute, compilation, assembly.Name) is { } definition)
                 {
                     definitions.Add(definition);
                 }
             }
         }
 
-        return new EquatableArray<ServiceDefinitionData>(
-            definitions
+        return new ReferencedServices(
+            new EquatableArray<ServiceDefinitionData>(definitions
                 .OrderBy(static d => d.ImplementationTypeFqn, StringComparer.Ordinal)
                 .ThenBy(static d => d.ServiceTypeFqn, StringComparer.Ordinal)
                 .ThenBy(static d => d.Key, StringComparer.Ordinal)
-                .ToArray());
+                .ToArray()),
+            new EquatableArray<string>(moduleIdentifiers
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static identifier => identifier, StringComparer.Ordinal)
+                .ToArray()));
     }
 
-    private static ServiceDefinitionData? ReadServiceDefinition(AttributeData attribute, Compilation compilation)
+    private static ServiceDefinitionData? ReadServiceDefinition(
+        AttributeData attribute,
+        Compilation compilation,
+        string ownerAssemblyName)
     {
         var args = attribute.ConstructorArguments;
         if (args.Length < 10 || args[0].Value is not ITypeSymbol implementation ||
@@ -380,6 +396,7 @@ internal static class Parsers
         }
 
         return new ServiceDefinitionData(
+            ownerAssemblyName,
             service.ToDisplayString(FullyQualifiedTypeOf),
             implementation.ToDisplayString(FullyQualifiedTypeOf),
             lifetime,
