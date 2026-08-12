@@ -53,7 +53,11 @@ configure `[Inject]`, compose multi-project registrations, and resolve diagnosti
 
 ```bash
 npx skills add nkchinh/di-generator --skill di-generator
-# or
+```
+
+Or with pnpm:
+
+```bash
 pnpm dlx skills add nkchinh/di-generator --skill di-generator
 ```
 

@@ -38,7 +38,11 @@ Cài skill để agent tích hợp và sử dụng DIGen hiệu quả: chọn li
 
 ```bash
 npx skills add nkchinh/di-generator --skill di-generator
-# hoặc
+```
+
+Hoặc dùng pnpm:
+
+```bash
 pnpm dlx skills add nkchinh/di-generator --skill di-generator
 ```
 
