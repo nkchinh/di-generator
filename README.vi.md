@@ -31,6 +31,17 @@ Chỉ project nào thực sự gọi `IServiceCollection` mới cần tham chi�
 `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 8.0 — project Domain/Application không
 tham chiếu MEDI vẫn compile sạch (xem [README.md](README.md#how-it-works)).
 
+### Skill cho Agent
+
+Cài skill để agent tích hợp và sử dụng DIGen hiệu quả: chọn lifetime, cấu hình `[Inject]`, compose
+đăng ký multi-project và xử lý diagnostics:
+
+```bash
+npx skills add nkchinh/di-generator --skill di-generator
+```
+
+Skill cũng có tại [skills/di-generator/SKILL.md](skills/di-generator/SKILL.md).
+
 ## Dùng nhanh
 
 ```csharp

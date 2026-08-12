@@ -46,6 +46,17 @@ package needs is generated into your project as `internal` code at compile time.
 </ItemGroup>
 ```
 
+### Agent Skill
+
+Install the skill to help AI agents integrate and use DIGen effectively: choose service lifetimes,
+configure `[Inject]`, compose multi-project registrations, and resolve diagnostics:
+
+```bash
+npx skills add nkchinh/di-generator --skill di-generator
+```
+
+The skill is also available directly at [skills/di-generator/SKILL.md](skills/di-generator/SKILL.md).
+
 ## Quick start
 
 ```csharp
