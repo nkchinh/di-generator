@@ -20,6 +20,9 @@ public class SnapshotTests
 
         var settings = new VerifySettings();
         settings.UseDirectory("Snapshots");
+        // The generator version is covered by GeneratorInfoTests. Keep golden files stable
+        // across package releases so version bumps do not rewrite every snapshot.
+        settings.AddScrubber(text => text.Replace(GeneratorInfo.Version, "0.0.0"));
         return Verifier.Verify(driver, settings);
     }
 

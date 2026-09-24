@@ -1,9 +1,26 @@
+using System.Reflection;
+
 namespace NkChinh.DI.Generator;
 
 internal static class GeneratorInfo
 {
     public const string Name = "NkChinh.DI.Generator";
-    public const string Version = "0.0.0";
+    public static readonly string Version = ResolveVersion();
+
+    private static string ResolveVersion()
+    {
+        var assembly = typeof(GeneratorInfo).Assembly;
+        var attribute = (AssemblyInformationalVersionAttribute?)
+            Attribute.GetCustomAttribute(
+                assembly,
+                typeof(AssemblyInformationalVersionAttribute));
+        var version = attribute?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+        var metadataSeparator = version.IndexOf('+');
+
+        return metadataSeparator < 0 ? version : version.Substring(0, metadataSeparator);
+    }
 }
 
 /// <summary>
