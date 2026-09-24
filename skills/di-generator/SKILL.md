@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires .NET SDK 8 or newer. Generic service attributes require C# 11 or newer.
 metadata:
   author: NkChinh
-  version: "0.0.6"
+  version: "0.0.7"
   repository: https://github.com/nkchinh/di-generator
   source: https://github.com/nkchinh/di-generator/tree/master/skills/di-generator
 ---
@@ -33,7 +33,7 @@ Add the analyzer package to every project that declares DIGen services or uses `
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.6" PrivateAssets="all" />
+  <PackageReference Include="NkChinh.DI.Generator" Version="0.0.7" PrivateAssets="all" />
 </ItemGroup>
 ```
 
